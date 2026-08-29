@@ -1,7 +1,7 @@
 {
   "arm": "c4-kvpin",
   "date": "2026-08-29T09:54:50Z",
-  "decision": "ADOPTED (provisional \u2014 see caveats)",
+  "decision": "REJECTED (superseded 2026-08-29)",
   "git_sha": "fa71b232c1226b92830d693a6c4d6bc4936f195e",
   "env_fingerprint": {
     "MAX_MODEL_LEN": 1000000,
@@ -46,5 +46,10 @@
     "vm.swappiness is 60 on both nodes (ritual skipped on this boot; password needed to set/persist) \u2014 set to 0 manually: sudo sysctl -w vm.swappiness=0 + persist in /etc/sysctl.d/90-glm53.conf",
     "Plumbing fix required: KV_CACHE_MEMORY was missing from the head container's explicit -e list (start.sh) \u2014 first pin attempt was a silent no-op, same class as the C6 miss. Fixed and verified in this boot."
   ],
-  "notes": "Same class of per-path env forwarding bug as C6 \u2014 the head's -e list is hand-maintained; recommend a start.sh refactor that derives the head env list from the same loop as the worker."
+  "notes": "Same class of per-path env forwarding bug as C6 \u2014 the head's -e list is hand-maintained; recommend a start.sh refactor that derives the head env list from the same loop as the worker.",
+  "verdict_update": {
+    "date": "2026-08-29",
+    "reason": "Two node-level crashes with the pin active (one at serving with swappiness=60, one at warmup with swappiness=0). Host free RAM ~2 GiB; UVM livelock (shm_broadcast starvation) power-cycled both nodes. Pinning skips the memory profiler; weight-load page-cache refill loses the MemFree allocation race (NVFP4 ladder). swappiness=0 alone did not prevent crash #2.",
+    "resolution": "Reverted to auto (profiled-safe ~13.7 GiB, 1.37x). CACHE_FLUSHER=1 recommended as insurance for future manual pins; any re-test must use the 'to-fit' value (13.05 GiB) with flusher + ritual, never 'fully utilize' (17.7 GiB)."
+  }
 }
