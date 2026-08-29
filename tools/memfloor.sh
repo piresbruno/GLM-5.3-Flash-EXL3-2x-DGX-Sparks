@@ -38,6 +38,8 @@ mkdir -p "$OUT"
 HEAD_LOG="$OUT/head.memlog"
 WORKER_LOG="$OUT/worker.memlog"
 
+worker_ssh() { ssh -o BatchMode=yes -o ConnectTimeout=10 "$WORKER_SSH" "$@"; }
+
 echo "memfloor '$LABEL': sampling head + worker into $OUT"
 [ -x "$SCRIPT_DIR/tools/memlog.sh" ] || chmod +x "$SCRIPT_DIR/tools/memlog.sh"
 
