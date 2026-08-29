@@ -946,6 +946,7 @@ WARN: worker_ssh ritual failed"
 launch_cache_flusher() {  # $1 = "remote" or "local"
   [ "${CACHE_FLUSHER:-0}" = "1" ] || return 0
   if [ "${1:-local}" = "remote" ]; then
+    scp -q -o BatchMode=yes "$SCRIPT_DIR/cache_flusher.sh" "${WORKER_SSH}:/tmp/cache_flusher.sh"  # was never shipped — worker sidecar silently failed before
     worker_ssh "nohup bash /tmp/cache_flusher.sh >/dev/null 2>&1 & echo sidecar up"
   else
     nohup bash "$SCRIPT_DIR/cache_flusher.sh" >/dev/null 2>&1 &
