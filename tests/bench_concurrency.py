@@ -100,8 +100,8 @@ def metrics_snapshot(url):
             ("drafted", "vllm:spec_decode_num_draft_tokens_total"),
             ("accepted", "vllm:spec_decode_num_accepted_tokens_total"),
             ("preemptions", "vllm:num_preemptions_total"),
-            ("apc_hits", "vllm:gpu_prefix_cache_hits_total"),
-            ("apc_queries", "vllm:gpu_prefix_cache_queries_total"),
+            ("apc_hits", "vllm:prefix_cache_hits_total"),
+            ("apc_queries", "vllm:prefix_cache_queries_total"),
         ):
             if line.startswith(prefix):
                 try:
