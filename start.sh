@@ -64,6 +64,17 @@ _cli_image="${IMAGE-}"
 _cli_util="${GPU_MEM_UTIL-}"
 _cli_lm="${LANGUAGE_MODEL_ONLY-}"
 _cli_max_num_seqs="${MAX_NUM_SEQS-}"
+# A/B arm knobs (C6/C7/C8 + C4/C2) must also survive the .env source so
+# inline overrides like DFLASH_TOKENS=5 ./start.sh restart actually win.
+_cli_dflash_tokens="${DFLASH_TOKENS-}"
+_cli_dflash_draft_tp="${DFLASH_DRAFT_TP-}"
+_cli_max_batched="${MAX_NUM_BATCHED_TOKENS-}"
+_cli_kv_dtype="${KV_CACHE_DTYPE-}"
+_cli_kv_mem="${KV_CACHE_MEMORY-}"
+_cli_cg="${CG_ESTIMATE-}"
+_cli_max_len="${MAX_MODEL_LEN-}"
+_cli_mixed="${GLM53_MIXED_PREFILL_CHUNK-}"
+_cli_flusher="${CACHE_FLUSHER-}"
 set -a
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/.env"
@@ -76,6 +87,15 @@ set +a
 [ -n "${_cli_util}" ] && GPU_MEM_UTIL="$_cli_util"
 [ -n "${_cli_lm}" ] && LANGUAGE_MODEL_ONLY="$_cli_lm"
 [ -n "${_cli_max_num_seqs}" ] && MAX_NUM_SEQS="$_cli_max_num_seqs"
+[ -n "${_cli_dflash_tokens}" ] && DFLASH_TOKENS="$_cli_dflash_tokens"
+[ -n "${_cli_dflash_draft_tp}" ] && DFLASH_DRAFT_TP="$_cli_dflash_draft_tp"
+[ -n "${_cli_max_batched}" ] && MAX_NUM_BATCHED_TOKENS="$_cli_max_batched"
+[ -n "${_cli_kv_dtype}" ] && KV_CACHE_DTYPE="$_cli_kv_dtype"
+[ -n "${_cli_kv_mem}" ] && KV_CACHE_MEMORY="$_cli_kv_mem"
+[ -n "${_cli_cg}" ] && CG_ESTIMATE="$_cli_cg"
+[ -n "${_cli_max_len}" ] && MAX_MODEL_LEN="$_cli_max_len"
+[ -n "${_cli_mixed}" ] && GLM53_MIXED_PREFILL_CHUNK="$_cli_mixed"
+[ -n "${_cli_flusher}" ] && CACHE_FLUSHER="$_cli_flusher"
 
 # ----------------------------- configuration -------------------------------
 MODEL="${MODEL:-Mia-AiLab/GLM-5.3-Flash-EXL3-TR3-4bpw}"
@@ -143,6 +163,22 @@ DFLASH_TOKENS="${DFLASH_TOKENS:-7}"
 DFLASH_DRAFT_TP="${DFLASH_DRAFT_TP-1}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-1000000}"
 GPU_MEM_UTIL="${GPU_MEM_UTIL:-0.87}"
+# HARD LIMIT (2026-08-29 crash review): on this kit GPU_MEM_UTIL > 0.85 has
+# frozen both nodes twice (UVM livelock: shm_broadcast starvation -> power
+# cycle). 0.85 auto is the profiled-safe envelope (~13.7 GiB KV @1M, 1.37x).
+# Refuse louder-than-0.85 rather than reproduce the freeze.
+if awk "BEGIN{exit !(${GPU_MEM_UTIL:-0.85} > 0.85)}" 2>/dev/null; then
+    die "GPU_MEM_UTIL=${GPU_MEM_UTIL} > 0.85 is not allowed on this kit (crash review 2026-08-29: >0.85 froze both nodes). Set 0.85."
+fi
+# Pin guard: pinning skips the memory profiler (OPEN-PROBLEMS #5); only the
+# profile-time 'to fit' suggestion is defensible, and only with the cache
+# flusher + ritual. Emit a hard error for anything above the conservative
+# envelope unless CG_ESTIMATE=0 is also set (returns the graph deduction).
+if [ -n "${KV_CACHE_MEMORY:-}" ]; then
+    if [ "${CG_ESTIMATE:-1}" != "0" ]; then
+        warn "KV_CACHE_MEMORY is set while CG_ESTIMATE=1: the CUDA-graph deduction (~1.4 GiB) is still reserved from the pool — prefer CG_ESTIMATE=0 over pinning"
+    fi
+fi
 MAX_NUM_SEQS="${MAX_NUM_SEQS:-4}"
 # 8192 chunk × long history oversubscribes GB10 persistent_topk smem (300k crash).
 MAX_NUM_BATCHED_TOKENS="${MAX_NUM_BATCHED_TOKENS:-1024}"
@@ -1158,6 +1194,20 @@ start() {
         post_ready_warmup
         on_ready
         return
+    fi
+    # Boot-lottery fallback: on a clean memory-shortfall refuse (9.xx < 9.66 GiB
+    # needed for 1M), vLLM suggests the actual max length. Retry ONCE with that
+    # value instead of failing the whole launch. Never raises util (0.85 cap).
+    suggested_len=$(grep -oP "estimated maximum model length is \\K[0-9]+" "$LOGDIR/head.log" | tail -1)
+    if [ -n "${suggested_len:-}" ] && [ "${suggested_len:-0}" -lt "${MAX_MODEL_LEN:-1000000}" ]; then
+        log "KV shortfall: engine estimates max length ${suggested_len} < ${MAX_MODEL_LEN} — retrying once with MAX_MODEL_LEN=${suggested_len}"
+        MAX_MODEL_LEN="$suggested_len"
+        launch_cluster
+        if wait_for_health; then
+            post_ready_warmup
+            on_ready
+            return
+        fi
     fi
     collect_failure_logs
     echo "---- last 60 lines of head log ($LOGDIR/head.log) ----"

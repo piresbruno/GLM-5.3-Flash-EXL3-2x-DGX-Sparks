@@ -109,6 +109,13 @@ log "watchdog started (pid $$, interval ${CHECK_INTERVAL}s, threshold $FAIL_THRE
 
 fails=0
 while true; do
+  # Memory-pressure alarm: the UVM livelock's leading indicator is MemFree
+  # collapsing (driver allocates from MemFree, not MemAvailable) minutes before
+  # the shm_broadcast hang. Warn loudly when host free drops below the floor.
+  memfree_kb=$(awk '/^MemFree:/{print $2}' /proc/meminfo 2>/dev/null)
+  if [ -n "${memfree_kb:-}" ] && [ "${memfree_kb:-0}" -lt "${MEMFREE_ALARM_KB:-8388608}" ]; then  # <8 GiB
+    log "MEMORY ALARM: host MemFree=${memfree_kb} kB < ${MEMFREE_ALARM_KB:-8388608} kB floor — UVM livelock risk (crash review 2026-08-29). Consider draining concurrent long-context load."
+  fi
   if healthy; then
     if [ "$fails" -gt 0 ]; then log "health OK again after $fails failure(s)"; fi
     fails=0
