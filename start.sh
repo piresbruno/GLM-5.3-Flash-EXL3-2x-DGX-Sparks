@@ -76,6 +76,12 @@ _cli_max_len="${MAX_MODEL_LEN-}"
 _cli_mixed="${GLM53_MIXED_PREFILL_CHUNK-}"
 _cli_flusher="${CACHE_FLUSHER-}"
 _cli_dsd="${DSD_TABLE-}"
+# R1 bundle knobs survive the .env source too, so inline arm overrides like
+# ASYNC_SCHEDULING=1 DSD_TABLE=... ./start.sh restart actually win.
+_cli_lpt="${LONG_PREFILL_TOKEN_THRESHOLD-}"
+_cli_async="${ASYNC_SCHEDULING-}"
+_cli_retention="${VLLM_PREFIX_CACHE_RETENTION_INTERVAL-}"
+_cli_fiws="${FLASHINFER_WORKSPACE_BASE-}"
 set -a
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/.env"
@@ -98,6 +104,17 @@ set +a
 [ -n "${_cli_mixed}" ] && GLM53_MIXED_PREFILL_CHUNK="$_cli_mixed"
 [ -n "${_cli_flusher}" ] && CACHE_FLUSHER="$_cli_flusher"
 [ -n "${_cli_dsd}" ] && DSD_TABLE="${_cli_dsd}"
+[ -n "${_cli_lpt}" ] && LONG_PREFILL_TOKEN_THRESHOLD="$_cli_lpt"
+[ -n "${_cli_async}" ] && ASYNC_SCHEDULING="$_cli_async"
+[ -n "${_cli_retention}" ] && VLLM_PREFIX_CACHE_RETENTION_INTERVAL="$_cli_retention"
+[ -n "${_cli_fiws}" ] && FLASHINFER_WORKSPACE_BASE="$_cli_fiws"
+
+# Helpers are defined BEFORE the configuration section: the config-side guards
+# (GPU_MEM_UTIL hard limit, ASYNC_SCHEDULING validation, dsd_validate) refuse
+# with die() during parsing, before the old post-config helper block ran.
+log()  { printf '\033[1;36m[glm53-exl3]\033[0m %s\n' "$*"; }
+warn() { printf '\033[1;33m[glm53-exl3]\033[0m %s\n' "$*" >&2; }
+die()  { printf '\033[1;31m[glm53-exl3]\033[0m ERROR: %s\n' "$*" >&2; exit 1; }
 
 # ----------------------------- configuration -------------------------------
 MODEL="${MODEL:-Mia-AiLab/GLM-5.3-Flash-EXL3-TR3-4bpw}"
@@ -197,8 +214,46 @@ if [ -n "${KV_CACHE_MEMORY:-}" ]; then
     fi
 fi
 MAX_NUM_SEQS="${MAX_NUM_SEQS:-4}"
+# R1 bundle (2026-08-30, derived from the Reederey87 kit): 3584 = 14 × 256-token
+# pages — page-exact prefill chunks. 8192 is still the known indexer-topk smem
+# OOM on this lane. D1 measured 512->2048 (−25.7% 100k TTFT); R1 3584 re-gates
+# the prefill step budget with the long-prefill path (LPT below).
 # 8192 chunk × long history oversubscribes GB10 persistent_topk smem (300k crash).
-MAX_NUM_BATCHED_TOKENS="${MAX_NUM_BATCHED_TOKENS:-1024}"
+MAX_NUM_BATCHED_TOKENS="${MAX_NUM_BATCHED_TOKENS:-3584}"
+
+# ---- R1 bundle knobs (scheduler / cache geometry) --------------------------
+# These are start.sh's bundle defaults so a restart never silently loses the
+# bundle; arms override explicitly (see docs/CAMPAIGN-R1.md):
+#   LONG_PREFILL_TOKEN_THRESHOLD=        (empty = scheduler default 0 = cap off)
+#   ASYNC_SCHEDULING=auto                (vLLM auto — the Phase-2 baseline arm)
+#   VLLM_PREFIX_CACHE_RETENTION_INTERVAL= (empty = unset = dense checkpoints)
+# ---
+# Requests with more prompt tokens than this take the long-prefill scheduling
+# path (chunked prefill / overlap-with-decode). Bundle value 1792 = 7 pages,
+# exactly half the 3584 step budget. Scheduler flag, emitted directly by the
+# inner scripts (kept OUT of EXTRA_ARGS so an arm cannot double-add it).
+LONG_PREFILL_TOKEN_THRESHOLD="${LONG_PREFILL_TOKEN_THRESHOLD:-1792}"
+# 0 = --no-async-scheduling (bundle baseline; async off). 1 = --async-scheduling
+# (required by the DSD arm — dsd_validate enforces it). auto = pass neither
+# flag, vLLM decides (the Phase-2 baseline-arm setting, resolves the
+# "async is not free" A/B: async off measured at/above async on at c=1).
+ASYNC_SCHEDULING="${ASYNC_SCHEDULING:-0}"
+case "$ASYNC_SCHEDULING" in
+    0|1|auto) ;;
+    *) die "ASYNC_SCHEDULING=$ASYNC_SCHEDULING must be 0, 1 or auto (0=off bundle, 1=on DSD, auto=vLLM decides)" ;;
+esac
+# Sparse KDA retention for prefix caching (fork env, vLLM reads it in-process):
+#   unset/empty = dense checkpoints (default); 0 = retain only the latest
+#   completed prompt boundary + shared-prefix junctions; N>0 = checkpoints at
+#   every N-th boundary. This fork extends it to the SWA/MambaSpec (KDA) groups.
+# Forwarded to BOTH ranks conditionally on non-empty — the fork's env parser
+# runs int() on the value, so an EMPTY STRING crashes boot (must mean "unset").
+VLLM_PREFIX_CACHE_RETENTION_INTERVAL="${VLLM_PREFIX_CACHE_RETENTION_INTERVAL:-0}"
+# FlashInfer JIT workspace root, INSIDE the already-mounted vLLM cache dir
+# (-v $CACHE_ROOT:/root/.cache/vllm on the head, $WORKER_VLLM_CACHE on the
+# worker), so JIT kernels survive container recreate and watchdog heals pay no
+# re-JIT. Path is in-container and identical on both ranks.
+FLASHINFER_WORKSPACE_BASE="${FLASHINFER_WORKSPACE_BASE:-/root/.cache/vllm/flashinfer}"
 
 # ---- D5: dynamic speculative decoding (DSD) --------------------------------
 # vLLM Dynamic SD (PR #32374, present in this image): per-batch-size draft
@@ -225,6 +280,10 @@ dsd_validate() {
     # Dies on any malformation; empty table is a valid no-op (DSD off).
     [ -n "$DSD_TABLE" ] || return 0
     [ "$SPEC_METHOD" = "dflash" ] || die "DSD_TABLE requires SPEC_METHOD=dflash (got $SPEC_METHOD)"
+    # R1: the DSD active path sizes per-step draft placeholders inside the
+    # AsyncScheduler — DSD without async scheduling silently degrades to the
+    # static ladder. The bundle defaults async OFF, so the arm must opt back in.
+    [ "${ASYNC_SCHEDULING:-0}" = "1" ] || die "DSD_TABLE requires ASYNC_SCHEDULING=1 (the DSD active path is the AsyncScheduler; the R1 bundle defaults async off)"
     local e rest start end k prev_end=0 count=0
     for e in $(printf '%s' "$DSD_TABLE" | tr ',' ' '); do
         count=$((count + 1))
@@ -344,9 +403,6 @@ WORKER_SCRIPT="$SCRIPT_DIR/.glm53-exl3-worker.inner.sh"
 EXPECTED_SHARDS="${EXPECTED_SHARDS:-120}"
 
 # ------------------------------- helpers -----------------------------------
-log()  { printf '\033[1;36m[glm53-exl3]\033[0m %s\n' "$*"; }
-warn() { printf '\033[1;33m[glm53-exl3]\033[0m %s\n' "$*" >&2; }
-die()  { printf '\033[1;31m[glm53-exl3]\033[0m ERROR: %s\n' "$*" >&2; exit 1; }
 
 banner() {
     local label="${1:-start.sh}"
@@ -433,6 +489,23 @@ preflight() {
         || die "worker cannot talk to its docker daemon (docker group?)"
     worker_ssh "nvidia-smi -L 2>/dev/null | grep -q GB10" \
         || warn "no GB10 GPU visible on worker"
+
+    # R1 Phase-0 gate: stay on the 580.x driver branch. 590.x deadlocks
+    # CUDAGraph capture on GB10 (Reederey87 evidence; this kit measured 590.x
+    # hangs). If 590.x is installed, stop here and plan a downgrade before any
+    # boot — never re-capture graphs on 590.x.
+    local drv_head drv_worker side
+    drv_head="$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1 | tr -d '[:space:]' || true)"
+    drv_worker="$(worker_ssh "nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1" 2>/dev/null | tr -d '[:space:]' || true)"
+    for side in "head:${drv_head:-}" "worker:${drv_worker:-}"; do
+        case "${side#*:}" in
+            590*) die "driver ${side#*:} on ${side%%:*} is the 590.x branch — 590.x deadlocks CUDAGraph capture on GB10 (R1 Phase 0). Plan a downgrade to 580.x before booting the fleet." ;;
+            580*) ;;
+            "") warn "driver version unknown on ${side%%:*} (nvidia-smi missing?) — R1 Phase-0 gate unverified" ;;
+            *) warn "driver ${side#*:} on ${side%%:*} is not 580.x — R1 Phase-0 gate expects the 580.x branch" ;;
+        esac
+    done
+    log "driver branch: head=${drv_head:-unknown} worker=${drv_worker:-unknown} (R1 Phase-0 gate: 580.x)"
 
     # NCCL_IB_GID_INDEX must name a populated GID on BOTH nodes' CX7 devices.
     # An empty (all-zero) entry passes every earlier check and then kills the
@@ -601,6 +674,9 @@ ensure_image() {
     local skip_pull="${SKIP_PULL:-0}"
     [ "${PULL:-0}" = "1" ] && skip_pull=0
     if [ "${BUILD:-0}" = "1" ]; then
+        case "$IMAGE" in
+            *@sha256:*) die "BUILD=1 with a digest-pinned IMAGE (${IMAGE}) cannot tag a digest ref — set IMAGE to a local tag or drop the digest pin" ;;
+        esac
         build_image
         head_key="$(local_image_key)"
         head_ok=1
@@ -834,10 +910,18 @@ ARGS=(
 [ -n "${QUANTIZATION:-}" ] && [ "${QUANTIZATION}" != "none" ] && ARGS+=(--quantization "${QUANTIZATION}")
 [ -n "${MAX_MODEL_LEN:-}" ] && ARGS+=(--max-model-len "${MAX_MODEL_LEN}")
 [ -n "${GPU_MEM_UTIL:-}" ]  && ARGS+=(--gpu-memory-utilization "${GPU_MEM_UTIL}")
-[ -n "${KV_CACHE_MEMORY:-}" ] && ARGS+=(--kv-cache-memory "${KV_CACHE_MEMORY}")
+[ -n "${KV_CACHE_MEMORY:-}" ] && ARGS+=(--kv-cache-memory-bytes "${KV_CACHE_MEMORY}")
 [ -n "${MAX_NUM_SEQS:-}" ] && ARGS+=(--max-num-seqs "${MAX_NUM_SEQS}")
 [ -n "${MAX_NUM_BATCHED_TOKENS:-}" ] && ARGS+=(--max-num-batched-tokens "${MAX_NUM_BATCHED_TOKENS}")
 [ -n "${KV_CACHE_DTYPE:-}" ] && ARGS+=(--kv-cache-dtype "${KV_CACHE_DTYPE}")
+# R1 bundle scheduler flags — emitted directly, OUTSIDE EXTRA_ARGS, so an arm
+# appending to EXTRA_ARGS can never double-add or shadow them.
+[ -n "${LONG_PREFILL_TOKEN_THRESHOLD:-}" ] && ARGS+=(--long-prefill-token-threshold "${LONG_PREFILL_TOKEN_THRESHOLD}")
+if [ "${ASYNC_SCHEDULING:-0}" = "0" ]; then
+    ARGS+=(--no-async-scheduling)
+elif [ "${ASYNC_SCHEDULING:-0}" = "1" ]; then
+    ARGS+=(--async-scheduling)
+fi
 if [ "${SPEC_METHOD:-mtp}" = "dflash" ]; then
     ARGS+=(--speculative-config "$(python3 -S -c 'import json,os
 spec={"method":"dflash","model":os.environ["DFLASH_MODEL_DIR"],"num_speculative_tokens":int(os.environ.get("DFLASH_TOKENS","7")),"kv_cache_dtype":"auto","draft_sample_method":"probabilistic","rejection_sample_method":"standard"}
@@ -878,6 +962,7 @@ if [ -n "${EXTRA_ARGS:-}" ]; then
     EXTRA=(${EXTRA_ARGS})
     ARGS+=("${EXTRA[@]}")
 fi
+say "bundle: mnbt=${MAX_NUM_BATCHED_TOKENS:-} lpt=${LONG_PREFILL_TOKEN_THRESHOLD:-} async=${ASYNC_SCHEDULING:-0} retention=${VLLM_PREFIX_CACHE_RETENTION_INTERVAL:-unset} finfer-ws=${FLASHINFER_WORKSPACE_BASE:-} pin=${KV_CACHE_MEMORY:-}"
 
 [ -f "${MODEL_DIR}/config.json" ] || { say "FATAL: ${MODEL_DIR}/config.json missing"; ls -la "${MODEL_DIR}" | head; exit 1; }
 if [ -f /opt/glm53/patch_glm_video_placeholders.py ]; then
@@ -928,10 +1013,18 @@ ARGS=(
 [ -n "${QUANTIZATION:-}" ] && [ "${QUANTIZATION}" != "none" ] && ARGS+=(--quantization "${QUANTIZATION}")
 [ -n "${MAX_MODEL_LEN:-}" ] && ARGS+=(--max-model-len "${MAX_MODEL_LEN}")
 [ -n "${GPU_MEM_UTIL:-}" ]  && ARGS+=(--gpu-memory-utilization "${GPU_MEM_UTIL}")
-[ -n "${KV_CACHE_MEMORY:-}" ] && ARGS+=(--kv-cache-memory "${KV_CACHE_MEMORY}")
+[ -n "${KV_CACHE_MEMORY:-}" ] && ARGS+=(--kv-cache-memory-bytes "${KV_CACHE_MEMORY}")
 [ -n "${MAX_NUM_SEQS:-}" ] && ARGS+=(--max-num-seqs "${MAX_NUM_SEQS}")
 [ -n "${MAX_NUM_BATCHED_TOKENS:-}" ] && ARGS+=(--max-num-batched-tokens "${MAX_NUM_BATCHED_TOKENS}")
 [ -n "${KV_CACHE_DTYPE:-}" ] && ARGS+=(--kv-cache-dtype "${KV_CACHE_DTYPE}")
+# R1 bundle scheduler flags — emitted directly, OUTSIDE EXTRA_ARGS, so an arm
+# appending to EXTRA_ARGS can never double-add or shadow them.
+[ -n "${LONG_PREFILL_TOKEN_THRESHOLD:-}" ] && ARGS+=(--long-prefill-token-threshold "${LONG_PREFILL_TOKEN_THRESHOLD}")
+if [ "${ASYNC_SCHEDULING:-0}" = "0" ]; then
+    ARGS+=(--no-async-scheduling)
+elif [ "${ASYNC_SCHEDULING:-0}" = "1" ]; then
+    ARGS+=(--async-scheduling)
+fi
 if [ "${SPEC_METHOD:-mtp}" = "dflash" ]; then
     ARGS+=(--speculative-config "$(python3 -S -c 'import json,os
 spec={"method":"dflash","model":os.environ["DFLASH_MODEL_DIR"],"num_speculative_tokens":int(os.environ.get("DFLASH_TOKENS","7")),"kv_cache_dtype":"auto","draft_sample_method":"probabilistic","rejection_sample_method":"standard"}
@@ -970,6 +1063,7 @@ if [ -n "${EXTRA_ARGS:-}" ]; then
     EXTRA=(${EXTRA_ARGS})
     ARGS+=("${EXTRA[@]}")
 fi
+say "bundle: mnbt=${MAX_NUM_BATCHED_TOKENS:-} lpt=${LONG_PREFILL_TOKEN_THRESHOLD:-} async=${ASYNC_SCHEDULING:-0} retention=${VLLM_PREFIX_CACHE_RETENTION_INTERVAL:-unset} finfer-ws=${FLASHINFER_WORKSPACE_BASE:-} pin=${KV_CACHE_MEMORY:-}"
 
 [ -f "${MODEL_DIR}/config.json" ] || { say "FATAL: ${MODEL_DIR}/config.json missing"; ls -la "${MODEL_DIR}" | head; exit 1; }
 if [ -f /opt/glm53/patch_glm_video_placeholders.py ]; then
@@ -1053,6 +1147,9 @@ launch_cluster() {
 
     mkdir -p "$CACHE_ROOT" "$TRITON_HOST_CACHE" "$TILELANG_HOST_CACHE"
     worker_ssh "mkdir -p '$WORKER_VLLM_CACHE' '$WORKER_TRITON_CACHE' '$WORKER_TILELANG_CACHE'"
+    # A launch is a deliberate start — release the watchdog pause written by
+    # the last ./start.sh stop.
+    rm -f "$LOGDIR/.watchdog-paused"
     scp -q -o BatchMode=yes "$WORKER_SCRIPT" "${WORKER_SSH}:/tmp/${CONTAINER_WORKER}.sh"
     [ -f "$CHAT_TEMPLATE_HOST" ] || die "missing chat template: $CHAT_TEMPLATE_HOST"
     scp -q -o BatchMode=yes "$CHAT_TEMPLATE_HOST" "${WORKER_SSH}:/tmp/glm53-chat_template.jinja"
@@ -1108,6 +1205,20 @@ launch_cluster() {
         worker_nccl+=" -e $e"
     done
 
+    # R1 bundle envs. Conditional on non-empty: the fork's env parser int()s
+    # VLLM_PREFIX_CACHE_RETENTION_INTERVAL, so forwarding an EMPTY string would
+    # crash boot — empty means "unset" (dense checkpoints / FlashInfer default).
+    local -a bundle_env=()
+    [ -n "${VLLM_PREFIX_CACHE_RETENTION_INTERVAL:-}" ] && \
+        bundle_env+=(-e "VLLM_PREFIX_CACHE_RETENTION_INTERVAL=$VLLM_PREFIX_CACHE_RETENTION_INTERVAL")
+    [ -n "${FLASHINFER_WORKSPACE_BASE:-}" ] && \
+        bundle_env+=(-e "FLASHINFER_WORKSPACE_BASE=$FLASHINFER_WORKSPACE_BASE")
+    local worker_bundle="" be
+    for be in "${bundle_env[@]}"; do
+        [ "$be" = "-e" ] && continue
+        worker_bundle+=" -e $be"
+    done
+
     local -a head_preload=() worker_preload=""
     if [ "$USE_HOST_NCCL" = "1" ]; then
         if [ -f "$NCCL_HOST_DIR/$NCCL_SO_NAME" ]; then
@@ -1130,6 +1241,7 @@ launch_cluster() {
              MAX_MODEL_LEN GPU_MEM_UTIL KV_CACHE_MEMORY MAX_NUM_SEQS MAX_NUM_BATCHED_TOKENS \
              KV_CACHE_DTYPE MTP_TOKENS SPEC_METHOD DFLASH_TOKENS DFLASH_MODEL_DIR \
              DFLASH_DRAFT_TP DSD_TABLE \
+             LONG_PREFILL_TOKEN_THRESHOLD ASYNC_SCHEDULING \
              LANGUAGE_MODEL_ONLY SKIP_MM_PROFILING \
              LIMIT_MM CHAT_TEMPLATE ENFORCE_EAGER EXL3_FUSED_MOE MODEL_DIR EXTRA_ARGS; do
         serve_env+=" -e $v='${!v:-}'"
@@ -1156,6 +1268,7 @@ launch_cluster() {
         -v '/tmp/patch_xgrammar_termination.py:/opt/glm53/patch_xgrammar_termination.py:ro' \
         ${worker_preload} \
         ${worker_nccl} \
+        ${worker_bundle} \
         -e NCCL_SOCKET_IFNAME='$WORKER_CX7_IF' \
         -e GLOO_SOCKET_IFNAME='$WORKER_CX7_IF' \
         -e NCCL_IB_HCA='$WORKER_CX7_IB' \
@@ -1211,6 +1324,9 @@ launch_cluster() {
         -e DFLASH_MODEL_DIR="${DFLASH_MODEL_DIR:-}" \
         -e DFLASH_DRAFT_TP="${DFLASH_DRAFT_TP:-}" \
         -e DSD_TABLE="${DSD_TABLE:-}" \
+        -e LONG_PREFILL_TOKEN_THRESHOLD="${LONG_PREFILL_TOKEN_THRESHOLD:-}" \
+        -e ASYNC_SCHEDULING="${ASYNC_SCHEDULING:-0}" \
+        "${bundle_env[@]}" \
         -e LANGUAGE_MODEL_ONLY="$LANGUAGE_MODEL_ONLY" \
         -e SKIP_MM_PROFILING="$SKIP_MM_PROFILING" \
         -e LIMIT_MM="$LIMIT_MM" \
@@ -1302,7 +1418,9 @@ on_ready() {
         spec="${spec} + DSD[${DSD_TABLE}]"
     fi
     log "  features   : tools=glm47+auto, reasoning=glm45, spec=${spec}, vision=${vision}"
-    log "  prefill    : max-num-batched-tokens=${MAX_NUM_BATCHED_TOKENS} (D1 spec-decode step budget — verify the boot log shows this number)"
+    log "  prefill    : max-num-batched-tokens=${MAX_NUM_BATCHED_TOKENS} (D1/R1 spec-decode step budget — verify the boot log shows this number)"
+    log "  bundle     : lpt=${LONG_PREFILL_TOKEN_THRESHOLD:-off} async=${ASYNC_SCHEDULING:-0} retention=${VLLM_PREFIX_CACHE_RETENTION_INTERVAL:-unset} flashinfer-ws=${FLASHINFER_WORKSPACE_BASE:-}"
+    log "  image      : ${IMAGE}"
     log "  thinking   : served default=$( [ "${GLM53_DEFAULT_THINKING:-1}" = "1" ] && echo on || echo off ) (GLM53_DEFAULT_THINKING; clients can override)"
     log "  weights    : mode=${WEIGHTS_MODE} (nfs => head reads ${WORKER_IP}:${NFS_PORT})"
     log "  quick test :"
@@ -1321,6 +1439,19 @@ on_ready() {
             log "  dsd-check  : no cudagraph_mode downgrade in boot log (V2 path intact)"
         fi
         log "  dsd-receipt: run tests/verify_dsd.py (per-position acceptance must freeze at pos K during a c>=2 burst)"
+    fi
+    # R1 KV-pin procedure (docs/CAMPAIGN-R1.md): boot UNPINNED once, read the
+    # suggested budget from the log, then pin KV_CACHE_MEMORY at (suggested −
+    # margin) — never raise. The gate is 3 cold boots with a byte-identical
+    # pool line.
+    local suggested_pin
+    suggested_pin=$(docker logs "$CONTAINER_HEAD" 2>&1 | grep -oP -- '--kv-cache-memory(?:-bytes)?=\K[0-9]+' | tail -1 || true)
+    if [ -n "${suggested_pin:-}" ]; then
+        if [ -n "${KV_CACHE_MEMORY:-}" ]; then
+            log "  kv-pin     : pinned KV_CACHE_MEMORY=${KV_CACHE_MEMORY} bytes (engine suggestion: ${suggested_pin})"
+        else
+            log "  kv-pin     : unpinned — engine suggests --kv-cache-memory-bytes=${suggested_pin} (pin at suggested − margin via KV_CACHE_MEMORY)"
+        fi
     fi
     if [ "${TAIL:-0}" = "1" ]; then
         log "tailing head logs — Ctrl-C just detaches, the server keeps running"
@@ -1384,7 +1515,12 @@ stop() {
     log "stopping worker container on ${WORKER_SSH} ..."
     worker_ssh "docker rm -f '$CONTAINER_WORKER'" >/dev/null 2>&1 \
         || log "  (no worker container was running)"
-    log "stopped."
+    # R1 watchdog guard: a deliberate stop must not be resurrected by the
+    # watchdog's crash/wedge recovery. fleet_watchdog.sh honors this sentinel;
+    # any launch clears it.
+    mkdir -p "$LOGDIR"
+    : > "$LOGDIR/.watchdog-paused"
+    log "stopped (watchdog paused via $LOGDIR/.watchdog-paused until the next launch)"
 }
 
 # ------------------------------ status -------------------------------------
