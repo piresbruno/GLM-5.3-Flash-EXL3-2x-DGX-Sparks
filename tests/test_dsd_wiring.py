@@ -58,6 +58,9 @@ BASE = {
     "DFLASH_TOKENS": "7",
     "MAX_NUM_SEQS": "4",
     "DSD_TABLE": "",
+    # R1: DSD requires ASYNC_SCHEDULING=1 (the active path is the
+    # AsyncScheduler) — dsd_validate dies otherwise.
+    "ASYNC_SCHEDULING": "1",
 }
 
 
