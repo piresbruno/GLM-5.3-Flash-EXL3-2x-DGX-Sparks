@@ -1,0 +1,14 @@
+{
+  "arm": "c6-chunk2048",
+  "date": "2026-08-29T01:02:05Z",
+  "decision": "REJECTED (no-op)",
+  "git_sha": "03f7e6ee7eabcd7c9c6322661285f64781807f34",
+  "metrics": {
+    "longprompt_ttft_ms": 8539,
+    "baseline_longprompt_ttft_ms": 8536,
+    "longprompt_decode_tok_s": 39.5,
+    "baseline": 36.9
+  },
+  "finding": "Engine clamps max_num_scheduled_tokens to 1024 based on speculative-decoding settings (vllm.py:1849) regardless of MAX_NUM_BATCHED_TOKENS=2048 \u2014 boot config itself shows max_num_batched_tokens=1024. Env-only C6 is invalid; needs a scheduler overlay patch (gate: also revisit with C7 k<7, since the clamp message suggests decreasing k relaxes the budget).",
+  "notes": "C2 ritual exercised during this restart: drop_caches OK both nodes, MemFree 119GB worker; compact_memory/persist/swap-cycle WARN-only (sudo -n limits)."
+}
