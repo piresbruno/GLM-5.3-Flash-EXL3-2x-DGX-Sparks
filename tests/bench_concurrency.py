@@ -45,6 +45,9 @@ def stream_one(url, model, prompt, max_tokens, temperature, out, idx):
         # GLM-5.3 thinking mode eats the budget as reasoning_content deltas;
         # the repo bench regime is thinking-off (matches bench_decode.py).
         "chat_template_kwargs": {"enable_thinking": False},
+        # exact token counts: spec-decode emits multi-token deltas, so counting
+        # chunks undercounts by ~k. The final chunk carries usage.
+        "stream_options": {"include_usage": True},
     }
     req = urllib.request.Request(
         url + "/v1/chat/completions",
@@ -54,6 +57,7 @@ def stream_one(url, model, prompt, max_tokens, temperature, out, idx):
     t0 = time.time()
     ttft = None
     ntok = 0
+    usage_ntok = None
     t_last = None
     try:
         resp = urllib.request.urlopen(req, timeout=900)
@@ -68,6 +72,8 @@ def stream_one(url, model, prompt, max_tokens, temperature, out, idx):
                 chunk = json.loads(data)
             except json.JSONDecodeError:
                 continue
+            if chunk.get("usage"):
+                usage_ntok = chunk["usage"].get("completion_tokens", usage_ntok)
             delta = (chunk.get("choices") or [{}])[0].get("delta") or {}
             if delta.get("content") or delta.get("reasoning") or delta.get("reasoning_content"):
                 now = time.time()
@@ -77,6 +83,7 @@ def stream_one(url, model, prompt, max_tokens, temperature, out, idx):
                 t_last = now
         dt = time.time() - t0
         t_first_abs = t0 + ttft if ttft is not None else None
+        ntok = usage_ntok if usage_ntok else ntok
         out[idx] = {
             "ok": True,
             "seconds": round(dt, 3),

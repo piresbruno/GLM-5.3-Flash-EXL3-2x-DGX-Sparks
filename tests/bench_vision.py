@@ -68,12 +68,14 @@ def main():
             "max_tokens": a.max_tokens,
             "temperature": a.temperature,
             "stream": True,
+            "chat_template_kwargs": {"enable_thinking": False},
+            "stream_options": {"include_usage": True},
         }
         req = urllib.request.Request(
             a.url + "/v1/chat/completions",
             data=json.dumps(payload).encode(),
             headers={"Content-Type": "application/json"})
-        t0 = time.time(); ttft = None; text = []; ntok = 0; t_last = None
+        t0 = time.time(); ttft = None; text = []; ntok = 0; t_last = None; usage_ntok = None
         try:
             resp = urllib.request.urlopen(req, timeout=600)
             for raw in resp:
@@ -87,6 +89,8 @@ def main():
                     chunk = json.loads(data)
                 except json.JSONDecodeError:
                     continue
+                if chunk.get("usage"):
+                    usage_ntok = chunk["usage"].get("completion_tokens", usage_ntok)
                 delta = (chunk.get("choices") or [{}])[0].get("delta") or {}
                 if delta.get("content"):
                     now = time.time()
@@ -95,6 +99,7 @@ def main():
                     text.append(delta["content"]); ntok += 1; t_last = now
             dt = time.time() - t0
             full = "".join(text)
+            ntok = usage_ntok if usage_ntok else ntok
             low = full.lower()
             ok = all(e in low for e in expect)
             nan = "nan" in low
