@@ -1,0 +1,85 @@
+{
+  "arm": "base",
+  "date": "2026-08-29T00:47:06.550453+00:00",
+  "git_sha": "d09edcd033da0174d5dce3bb7fd437c50d622548",
+  "image_id": "sha256:9bb1557a4234fce63d59599e44d10747eabd742beb337eebf9e7070be8a0fd58",
+  "repo_digest": "ghcr.io/miaai-lab/glm-5.3-flash-2x-dgx-sparks@sha256:9bb1557a4234fce63d59599e44d10747eabd742beb337eebf9e7070be8a0fd58",
+  "worker_image_id": "sha256:ad0cdd86d1ddd15ee758f519d16da15ac237f7f0648a5c52fbc20f9554944263",
+  "worker_repo_digest": "ghcr.io/miaai-lab/glm-5.3-flash-2x-dgx-sparks@sha256:9bb1557a4234fce63d59599e44d10747eabd742beb337eebf9e7070be8a0fd58",
+  "env_fingerprint": {
+    "MAX_MODEL_LEN": 1000000,
+    "GPU_MEM_UTIL": "0.85",
+    "MAX_NUM_BATCHED_TOKENS": 1024,
+    "DFLASH_TOKENS": 7,
+    "GLM53_MIXED_PREFILL_CHUNK": "skip",
+    "KV_CACHE_DTYPE": "fp8",
+    "SPEC_METHOD": "dflash",
+    "LANGUAGE_MODEL_ONLY": 0,
+    "ENFORCE_EAGER": 0
+  },
+  "env_diff_vs_baseline": {},
+  "kv_pool_tokens": 1371727,
+  "boot_receipts": {
+    "slot_share_line": "padded slot-share block=64 mla_page=2351104 (was block=16); draft_bytes/token=2048",
+    "max_concurrency": "1.37x for 1,000,000-token requests",
+    "apc_guard": "PASS (follow-up hits 3584-token hybrid align, 81%)",
+    "spec_decode_sanity": "per-pos decay 0.312/0.223/0.159/0.113/0.083/0.063/0.047 \u2014 no flat-1.00 trap"
+  },
+  "metrics": {
+    "structured_decode_tok_s": 66.8,
+    "prose_decode_tok_s": 25.6,
+    "accept_per_pos_ratio": "0.312/0.223/0.159/0.113/0.083/0.063/0.047",
+    "preemptions": 0,
+    "nan_or_garbage": 0,
+    "vision": {
+      "passed": "3/3",
+      "warm_ttft_s": 0.79,
+      "decode_tok_s_range": [
+        16.4,
+        25.2
+      ],
+      "cold_first_mm_ttft_s": 11.2,
+      "note": "spec-decode exempt (text-only drafter)"
+    },
+    "sweep_temp0": {
+      "c1": {
+        "agg": 35.8,
+        "decode": 37.0,
+        "ttft_ms": 374,
+        "accept": 0.541
+      },
+      "c2": {
+        "agg": 43.9,
+        "decode": 23.3,
+        "ttft_ms": 456,
+        "accept": 0.441
+      },
+      "c4": {
+        "agg": 42.7,
+        "decode": 15.5,
+        "ttft_ms": 6728,
+        "accept": 0.304
+      }
+    },
+    "sweep_temp1": {
+      "c1": {
+        "agg": 28.2,
+        "decode": 29.8,
+        "ttft_ms": 322,
+        "accept": 0.391
+      },
+      "c2": {
+        "agg": 30.6,
+        "decode": 23.4,
+        "ttft_ms": 4058,
+        "accept": 0.362
+      },
+      "c4": {
+        "agg": 44.1,
+        "decode": 12.2,
+        "ttft_ms": 467,
+        "accept": 0.273
+      }
+    }
+  }
+}
