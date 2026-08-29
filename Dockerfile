@@ -279,20 +279,30 @@ indexer.write_text(text)
 # 1) pool_topk buffers (prefill + decode branches) initialize to -1 instead
 #    of torch.empty, so a skipped/aborted pool write can never surface a
 #    stale uninitialized pool id as a huge garbage index downstream.
-old_pool_topk = (
-    "            pool_topk = torch.empty(\n"
-    "                (num_rows, select_k), dtype=torch.int32, device=logits.device\n"
-    "            )\n"
+# The two pool_topk sites differ in indentation (prefill 16/20, decode 12/16).
+pool_topk_pairs = (
+    (
+        "                pool_topk = torch.empty(\n"
+        "                    (num_rows, select_k), dtype=torch.int32, device=logits.device\n"
+        "                )\n",
+        "                pool_topk = torch.full(\n"
+        "                    (num_rows, select_k), -1, dtype=torch.int32, device=logits.device\n"
+        "                )\n",
+    ),
+    (
+        "            pool_topk = torch.empty(\n"
+        "                (num_rows, select_k), dtype=torch.int32, device=logits.device\n"
+        "            )\n",
+        "            pool_topk = torch.full(\n"
+        "                (num_rows, select_k), -1, dtype=torch.int32, device=logits.device\n"
+        "            )\n",
+    ),
 )
-new_pool_topk = (
-    "            pool_topk = torch.full(\n"
-    "                (num_rows, select_k), -1, dtype=torch.int32, device=logits.device\n"
-    "            )\n"
-)
-n = text.count(old_pool_topk)
-if n != 2:
-    raise RuntimeError(f"expected two pool_topk buffers, found {n}")
-text = text.replace(old_pool_topk, new_pool_topk)
+for old_pool_topk, new_pool_topk in pool_topk_pairs:
+    n = text.count(old_pool_topk)
+    if n != 1:
+        raise RuntimeError(f"expected one pool_topk buffer, found {n}")
+    text = text.replace(old_pool_topk, new_pool_topk)
 indexer.write_text(text)
 
 # 2) kpool_compress history guard: also bound pid < pool_len. A stale/padded
