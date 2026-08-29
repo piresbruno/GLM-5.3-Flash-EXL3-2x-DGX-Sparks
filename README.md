@@ -312,9 +312,12 @@ curl -s http://127.0.0.1:8888/v1/chat/completions \
   }'
 ```
 
-Thinking defaults on. Disable it with the **top-level** JSON field
-`"chat_template_kwargs": {"enable_thinking": false}`. This closes the empty
-thinking block in the generation prompt and omits the reasoning-effort hint.
+Thinking defaults on (D4: `GLM53_DEFAULT_THINKING` — 0 flips the served
+default to off, Entrpi-validated +7% structured acceptance; reasoning then
+arrives in `message.reasoning`). Disable it per request with the **top-level**
+JSON field `"chat_template_kwargs": {"enable_thinking": false}`. This
+closes the empty thinking block in the generation prompt and omits the
+reasoning-effort hint.
 Do not send a literal nested `extra_body` object over raw HTTP; `extra_body` is
 an OpenAI Python SDK option that merges its contents into the top-level request.
 The Hub `generation_config.json` stamps `temperature=1.0` / `top_p=0.95` unless
@@ -367,7 +370,7 @@ that are now documented/enforced:
 | `PORT` | `8888` | OpenAI API on the head |
 | `TP` / `NNODES` | `2` / `2` | do not change for this recipe |
 | `QUANTIZATION` | `exl3` | overlay method; never `marlin` |
-| `MTP_TOKENS` | `2` | MTP speculative tokens (`SPEC_METHOD=mtp`) |
+| `MTP_TOKENS` | `4` | MTP speculative tokens (`SPEC_METHOD=mtp`; k=4 measured faster than k=2, k=5 regresses — D4) |
 | `SPEC_METHOD` | `dflash` | `dflash` / `mtp` / `none`. Rollback: `SPEC_METHOD=mtp ./start.sh restart` |
 | `DFLASH_MODEL` | `incoai/GLM-5.3-Flash-DFlash2` | DFlash2 draft Hub repo (~2.3 GiB BF16) |
 | `DFLASH_TOKENS` | `7` | DFlash2 speculative tokens (trained block 8) |
@@ -380,11 +383,13 @@ that are now documented/enforced:
 | `GPU_MEM_UTIL` | `0.87` | GB10 UMA budget (DFlash2 + vision; live pool **1,754,237** tokens / **1.75×** at 1M / 690 blocks / 18.67 GiB) |
 | `MAX_MODEL_LEN` | `1000000` | default context. 1M allocates on the 1.75M padded-slot-share pool. Do not drop to 256k to “free” KV — logged tokens ≈ concurrency × this cap; hybrid block-id overhead then shrinks the pool |
 | `MAX_NUM_SEQS` | `4` | decode batch; MTP adds k+1 tokens/seq |
-| `MAX_NUM_BATCHED_TOKENS` | `1024` | prefill chunk; 8192 oversubscribes GB10 indexer topk on long context |
+| `MAX_NUM_BATCHED_TOKENS` | `1024` | prefill chunk; also the spec-decode step budget (engine honors it — vllm.py:1849 warns below 8192 but does not clamp; D1). 8192 oversubscribes GB10 indexer topk on long context. Raising it shrinks the KV pool (profiler sizes activations from it) — gate with memfloor |
 | `GLM53_MIXED_PREFILL_CHUNK` | `skip` | do not mix a peer prefill into a decode step (issue #6). `N>0` = cap tokens; `0` = off. Solo prefill stays 1024 |
 | `GLM53_SUPPRESS_STOPS_IN_REASONING` | `1` | ignore client `stop` strings until `</think>` (thinking-on default) |
 | `GLM53_BOOT_SHAPE_WARMUP` | `1` | after `/health`, burn DFlash2 BLOCK / sampler / kpool shapes (nonfatal) |
 | `TRITON_HOST_CACHE` / `TILELANG_HOST_CACHE` | `$CACHE_ROOT/triton` / `tilelang` | persist JIT caches across container recreate |
+| `GLM53_DEFAULT_THINKING` | `1` | served thinking default; `0` = off (D4: reasoning → `message.reasoning`; clients can override per request) |
+| `WEIGHTS_MODE` | `local` | `nfs` = head reads the worker's HF cache over NFS (`NFS_PORT` 12049, opt-in; avoids the measured head load wedge — D4) |
 | `LANGUAGE_MODEL_ONLY` | `0` | load vision tower (image + video) |
 | `SKIP_MM_PROFILING` | `1` | skip max-size MM dummy at init (OOM otherwise) |
 | `LIMIT_MM` | `{"image":4,"video":1}` | `--limit-mm-per-prompt` |
@@ -429,6 +434,25 @@ this Dockerfile instead. After CUDA compile, Python overlay edits
 
 Image-build runs `EXL3_SELFCHECK_GPU=0`. `./start.sh` runs the GPU self-check
 (`docker run --gpus all`) before shipping unless `SKIP_OVERLAY_VERIFY=1`.
+
+## Cross-stack validation (Entrpi) & memory-floor methodology
+
+[`docs/COMPARISON-ENTRPI.md`](docs/COMPARISON-ENTRPI.md) is the honest
+side-by-side against [Entrpi/glm-5.3-flash-exl3-2x-spark](https://github.com/Entrpi/glm-5.3-flash-exl3-2x-spark)
+— the same checkpoint + drafter on the same hardware through a custom vLLM
+fork. Verdict: this recipe leads on robustness tooling, KV pool size and 1M
+context; Entrpi leads on long-prompt prefill chunking (D1), memory-floor
+methodology (D2), task evals + spec-equivalence (D3) and a few knobs (D4) —
+adopted here as gated arms, see `results/ab/DECISION.md`.
+
+**Memory floors (D2):** GB10 fails as a swap wedge, not a graceful OOM. Any
+`KV_CACHE_MEMORY` pin or `GPU_MEM_UTIL` raise must be backed by a measured
+floor: `tools/memfloor.sh <label> -- <workload>` samples both nodes at 1 Hz
+(`tools/memlog.sh`) and writes `results/ab/memfloor-<label>-<stamp>/`.
+Rules: explicit budgets bypass the profiler reserve (raises are non-linear in
+floor cost — this kit's 17.7 GiB pin crashed twice); floors age ~1.5-2 GiB/day;
+keep the binding floor ≥ 5 GiB; `CACHE_FLUSHER=1` is validated-required on
+this kit's load window (MemFree 3.2 GiB idle floor).
 
 ## Do not
 
