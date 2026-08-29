@@ -1202,6 +1202,7 @@ start() {
     if [ -n "${suggested_len:-}" ] && [ "${suggested_len:-0}" -lt "${MAX_MODEL_LEN:-1000000}" ]; then
         log "KV shortfall: engine estimates max length ${suggested_len} < ${MAX_MODEL_LEN} — retrying once with MAX_MODEL_LEN=${suggested_len}"
         MAX_MODEL_LEN="$suggested_len"
+        write_inner_scripts   # regenerate both rank scripts with the new max len
         launch_cluster
         if wait_for_health; then
             post_ready_warmup
