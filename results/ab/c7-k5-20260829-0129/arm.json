@@ -1,0 +1,35 @@
+{
+  "arm": "c7-k5",
+  "date": "2026-08-29T01:27:43Z",
+  "decision": "REJECTED as default; kept as documented per-workload knob",
+  "git_sha": "af695b5fe5384b125e452bb4c95a3db09025002c",
+  "metrics": {
+    "sweep_temp0": {
+      "c1": {
+        "agg": 34.7,
+        "base": 35.8,
+        "delta": "-3.1%"
+      },
+      "c2": {
+        "agg": 47.0,
+        "base": 43.9,
+        "delta": "+7.1%"
+      },
+      "c4": {
+        "agg": 45.0,
+        "base": 42.7,
+        "delta": "+5.4%"
+      }
+    },
+    "structured_temp0": {
+      "k5": 54.1,
+      "base": 66.8,
+      "delta": "-19.0% \u2014 GATE FAIL"
+    },
+    "longprompt_ttft_ms": 8463,
+    "base": 0.541,
+    "accept_ratio_c1": 0.624
+  },
+  "finding": "k=5 wins at concurrency on mixed/prose prompts (+5-7% c2/c4) because dropped positions 6-7 carried only ~11% of accepted tokens. But structured (0.918-acceptance) loses ~2 tokens/step -> -19%. The scheduled-token clamp stays 1024 even at k=5, so k<7 does NOT relax the C6 budget either.",
+  "recommendation": "DFLASH_TOKENS is workload-dependent: keep 7 (shipping default) for structured/high-acceptance traffic; k=5 only for prose-heavy concurrent serving. Not re-pinned."
+}
