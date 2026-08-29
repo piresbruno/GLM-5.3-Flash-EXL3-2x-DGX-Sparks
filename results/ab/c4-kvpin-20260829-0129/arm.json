@@ -1,0 +1,50 @@
+{
+  "arm": "c4-kvpin",
+  "date": "2026-08-29T09:54:50Z",
+  "decision": "ADOPTED (provisional \u2014 see caveats)",
+  "git_sha": "fa71b232c1226b92830d693a6c4d6bc4936f195e",
+  "env_fingerprint": {
+    "MAX_MODEL_LEN": 1000000,
+    "GPU_MEM_UTIL": "0.85",
+    "MAX_NUM_BATCHED_TOKENS": 1024,
+    "DFLASH_TOKENS": 7,
+    "GLM53_MIXED_PREFILL_CHUNK": "skip",
+    "KV_CACHE_DTYPE": "fp8",
+    "SPEC_METHOD": "dflash",
+    "LANGUAGE_MODEL_ONLY": 0,
+    "ENFORCE_EAGER": 0
+  },
+  "pin": "KV_CACHE_MEMORY=19010164736 (17.7 GiB, vLLM 'fully utilize' suggestion, k=7/1M/slot-share geometry)",
+  "boot_receipts": {
+    "pool_tokens": 1829842,
+    "max_concurrency_1M": "1.83x (baseline 1.37x, +34%)",
+    "engine_ack": "reserved 17.7 GiB for KV Cache as specified by kv_cache_memory_bytes, skipped memory profiling",
+    "28k_trap_gate": "PASS \u2014 30k-token prompt served, no OOM, no rank death (TTFT 68.7s ~450 tok/s prefill, decode 35.5)"
+  },
+  "metrics": {
+    "sweep_temp0": {
+      "c1": {
+        "agg": 35.1,
+        "base": 35.8,
+        "delta": "-1.9% (within \u00b13%)"
+      },
+      "c2": {
+        "agg": 45.4,
+        "base": 43.9,
+        "delta": "+3.4%"
+      },
+      "c4": {
+        "agg": 49.5,
+        "base": 42.7,
+        "delta": "+15.9% (likely variance \u2014 pool size does not affect short-prompt decode)"
+      }
+    }
+  },
+  "preemptions": 0.0,
+  "caveats": [
+    "Host free RAM down to ~2 GiB (UMA tradeoff of the bigger pool); watch for bimodal decode under memory pressure",
+    "vm.swappiness is 60 on both nodes (ritual skipped on this boot; password needed to set/persist) \u2014 set to 0 manually: sudo sysctl -w vm.swappiness=0 + persist in /etc/sysctl.d/90-glm53.conf",
+    "Plumbing fix required: KV_CACHE_MEMORY was missing from the head container's explicit -e list (start.sh) \u2014 first pin attempt was a silent no-op, same class as the C6 miss. Fixed and verified in this boot."
+  ],
+  "notes": "Same class of per-path env forwarding bug as C6 \u2014 the head's -e list is hand-maintained; recommend a start.sh refactor that derives the head env list from the same loop as the worker."
+}
