@@ -43,10 +43,11 @@ worker_ssh() { ssh -o BatchMode=yes -o ConnectTimeout=10 "$WORKER_SSH" "$@"; }
 echo "memfloor '$LABEL': sampling head + worker into $OUT"
 [ -x "$SCRIPT_DIR/tools/memlog.sh" ] || chmod +x "$SCRIPT_DIR/tools/memlog.sh"
 
-# sampler on the worker (needs the script there) and locally
+# sampler on the worker (needs the script there; writes to a worker-LOCAL
+# tmp path — the head's results/ dir is not mounted on the worker) and locally
 worker_ssh "mkdir -p /tmp/glm53-memfloor" 2>/dev/null || true
 scp -q -o BatchMode=yes "$SCRIPT_DIR/tools/memlog.sh" "${WORKER_SSH}:/tmp/glm53-memfloor/memlog.sh"
-worker_ssh "nohup bash /tmp/glm53-memfloor/memlog.sh '$WORKER_LOG' '$WORKER_IP' >/dev/null 2>&1 & echo worker sampler up" >/dev/null
+worker_ssh "nohup bash /tmp/glm53-memfloor/memlog.sh /tmp/glm53-memfloor/worker.memlog '$WORKER_IP' >/dev/null 2>&1 & echo worker sampler up" >/dev/null
 bash "$SCRIPT_DIR/tools/memlog.sh" "$HEAD_LOG" "${HEAD_IP:-$(hostname)}" &
 HEAD_PID=$!
 trap 'kill $HEAD_PID 2>/dev/null || true; worker_ssh "pkill -f glm53-memfloor/memlog.sh" 2>/dev/null || true' EXIT
@@ -64,6 +65,8 @@ kill "$HEAD_PID" 2>/dev/null || true
 wait "$HEAD_PID" 2>/dev/null || true
 worker_ssh "pkill -f glm53-memfloor/memlog.sh" 2>/dev/null || true
 sleep 1
+# fetch the worker-side samples back (written to worker-local tmp)
+scp -q -o BatchMode=yes "${WORKER_SSH}:/tmp/glm53-memfloor/worker.memlog" "$WORKER_LOG" 2>/dev/null || echo "WARN: worker memlog not retrievable"
 
 head_floor="$(sort -n "$HEAD_LOG" | awk 'NR==1{print $2; exit}')"
 worker_floor="$(sort -n "$WORKER_LOG" | awk 'NR==1{print $2; exit}')"

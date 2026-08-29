@@ -1,0 +1,47 @@
+{
+  "arm": "d1-1024",
+  "date": "2026-08-29T17:35:00Z",
+  "git_sha": "710307e (branch checkpoint-d1-baseline)",
+  "image_digest": "ghcr.io/miaai-lab/glm-5.3-flash-2x-dgx-sparks@sha256:9bb1557a4234fce63d59599e44d10747eabd742beb337eebf9e7070be8a0fd58 (identical both ranks)",
+  "temperature": {"bench_temp0": true},
+  "env_fingerprint": {
+    "MAX_NUM_BATCHED_TOKENS": 1024,
+    "others": "identical to baseline-20260829-1559 (0.85 / CG_ESTIMATE=0 / no pin / dflash k=7 / fp8 / 1M / CACHE_FLUSHER=1)"
+  },
+  "boot": {
+    "max_num_scheduled_tokens": 1024,
+    "kv_pool_tokens": 1102094,
+    "max_concurrency_at_1M": "1.10x",
+    "available_kv_gib": 10.67,
+    "boot_ok_at_1M": true,
+    "boot_window_memavailable_floor_gib": {"head": 0.63, "worker": 4.80},
+    "flusher": "FIXED trigger (MemFree<8GiB OR Cached>40GiB) validated: MemFree held 15-18 GiB through shard load (baseline boot: 0.94 GiB); worker sidecar running (scp fix)"
+  },
+  "metrics": {
+    "structured_decode_tok_s": 66.27,
+    "structured_ttft_s_median": 0.464,
+    "structured_itl_ms_median": 15.1,
+    "structured_accept_ratio": 0.9588,
+    "prose_decode_tok_s": 27.35,
+    "prose_ttft_s_median": 0.472,
+    "prose_itl_ms_median": 36.5,
+    "longprompt_100k_ttft_ms_mean": 224389,
+    "longprompt_100k_decode_tok_s": 35.5,
+    "saturation_15k_ttft_ms": {"c1": 32928, "c2": 52230, "c4": 90661},
+    "saturation_15k_decode_tok_s": {"c1": 33.1, "c2": 30.8, "c4": 27.3},
+    "memfloor_saturation_gib": {"head": 0.65, "worker": 5.17, "binding": "head"},
+    "preemptions": 0,
+    "nan_or_garbage": 0,
+    "dmesg_faults": 0
+  },
+  "gates_vs_baseline": {
+    "boot_budget_shown": "PASS (1024 in log)",
+    "pool_fits_1M": "PASS (1.10x)",
+    "ttft_100k": "PASS (-18.6%, gate >=10%)",
+    "structured_pm3pct": "PASS (66.27 vs 66.28)",
+    "prose_pm3pct": "PASS (+2.8%)",
+    "boot_floor_improved": "PASS (0.63 vs 0.35 GiB)",
+    "safety": "PASS (0 preempts, no NaN, no dmesg faults)"
+  },
+  "notes": "llama-benchy lens dropped by operator decision mid-arm (process killed; partial output removed). Pool cost of 1024: -160k tokens vs 512 baseline (profiler sizes activations from MNBT) — accepted, still fits 1M."
+}
