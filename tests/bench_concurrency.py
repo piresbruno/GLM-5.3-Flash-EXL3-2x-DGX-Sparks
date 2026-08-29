@@ -42,6 +42,9 @@ def stream_one(url, model, prompt, max_tokens, temperature, out, idx):
         "max_tokens": max_tokens,
         "temperature": temperature,
         "stream": True,
+        # GLM-5.3 thinking mode eats the budget as reasoning_content deltas;
+        # the repo bench regime is thinking-off (matches bench_decode.py).
+        "chat_template_kwargs": {"enable_thinking": False},
     }
     req = urllib.request.Request(
         url + "/v1/chat/completions",
@@ -66,7 +69,7 @@ def stream_one(url, model, prompt, max_tokens, temperature, out, idx):
             except json.JSONDecodeError:
                 continue
             delta = (chunk.get("choices") or [{}])[0].get("delta") or {}
-            if delta.get("content"):
+            if delta.get("content") or delta.get("reasoning") or delta.get("reasoning_content"):
                 now = time.time()
                 if ttft is None:
                     ttft = now - t0
