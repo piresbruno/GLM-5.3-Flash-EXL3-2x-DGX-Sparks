@@ -32,10 +32,29 @@ PROMPTS = [
     "Write a short blog paragraph about why distributed tracing matters, in a casual tone.",
 ]
 
+_LONG_WORDS = (
+    "anchor basil cobalt delta ember fathom granite harbor indigo jasper kestrel "
+    "lagoon marble nectar obsidian prairie quartz rivet saffron tundra umbra "
+    "velvet walnut xenon yonder zephyr acorn bramble cinder dapple evergreen "
+)
 
-def stream_one(url, model, prompt, max_tokens, temperature, out, idx):
+
+def long_salt(tokens: int) -> str:
+    """Unique ~N-token filler (random word pairs) so long-prompt TTFT measures
+    prefill chunking without prefix-cache hits defeating the measurement."""
+    rng = random.Random()
+    words = _LONG_WORDS.split()
+    out = []
+    for _ in range(tokens):
+        out.append(rng.choice(words))
+    return "Background context (ignore, unique filler): " + " ".join(out) + " \\n\\nTask: "
+
+
+def stream_one(url, model, prompt, max_tokens, temperature, out, idx, long_prompt_tokens=0):
     """One streaming chat request: TTFT + decode tok/s from SSE deltas."""
     salt = f"[run {random.randint(1, 10**9)}] "
+    if long_prompt_tokens:
+        salt = long_salt(long_prompt_tokens) + salt
     payload = {
         "model": model,
         "messages": [{"role": "user", "content": salt + prompt}],
@@ -135,6 +154,8 @@ def main():
     ap.add_argument("--rounds", type=int, default=2)
     ap.add_argument("--max-tokens", type=int, default=400)
     ap.add_argument("--temperature", type=float, default=1.0)
+    ap.add_argument("--long-prompt-tokens", type=int, default=0,
+                    help="pad each prompt to ~N tokens (measures chunked-prefill TTFT)")
     ap.add_argument("--out", required=True)
     a = ap.parse_args()
 
@@ -145,6 +166,7 @@ def main():
         "rounds": a.rounds,
         "max_tokens": a.max_tokens,
         "temperature": a.temperature,
+        "long_prompt_tokens": a.long_prompt_tokens,
         "ts": time.time(),
         "levels_data": {},
     }
@@ -165,7 +187,7 @@ def main():
                 threading.Thread(
                     target=stream_one,
                     args=(a.url, a.model, PROMPTS[(i * 7 + c) % len(PROMPTS)],
-                          a.max_tokens, a.temperature, out, i),
+                          a.max_tokens, a.temperature, out, i, a.long_prompt_tokens),
                 )
                 for i in range(c)
             ]
