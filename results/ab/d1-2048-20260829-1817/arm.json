@@ -1,0 +1,43 @@
+{
+  "arm": "d1-2048",
+  "date": "2026-08-29T18:17:00Z",
+  "git_sha": "5167dc8 (branch checkpoint-d1-baseline)",
+  "image_digest": "ghcr.io/miaai-lab/glm-5.3-flash-2x-dgx-sparks@sha256:9bb1557a4234fce63d59599e44d10747eabd742beb337eebf9e7070be8a0fd58 (identical both ranks)",
+  "temperature": {"bench_temp0": true},
+  "env_fingerprint": {
+    "MAX_NUM_BATCHED_TOKENS": 2048,
+    "others": "identical to baseline-20260829-1559"
+  },
+  "boot": {
+    "max_num_scheduled_tokens": 2048,
+    "kv_pool_tokens": 1012077,
+    "max_concurrency_at_1M": "1.01x (razor-thin — motivates the 900k adoption)",
+    "available_kv_gib": 10.62,
+    "boot_ok_at_1M": true,
+    "flusher": "MemFree trigger active (7.2 GiB at 52% load, flushed); both sidecars up"
+  },
+  "metrics": {
+    "structured_decode_tok_s": 65.81,
+    "structured_ttft_s_median": 0.457,
+    "structured_itl_ms_median": 15.2,
+    "structured_accept_ratio": 0.9588,
+    "prose_decode_tok_s": 27.61,
+    "prose_ttft_s_median": 0.466,
+    "prose_itl_ms_median": 36.1,
+    "longprompt_100k_ttft_ms_mean": 204727,
+    "longprompt_100k_decode_tok_s": 43.6,
+    "saturation_15k_ttft_ms": {"c1": 30280, "c2": 50772, "c4": null},
+    "memfloor_saturation_gib": {"head": 0.53, "worker": 4.32, "binding": "head"},
+    "preemptions": 0,
+    "nan_or_garbage": 0
+  },
+  "gates_vs_baseline": {
+    "boot_budget_shown": "PASS (2048 in log)",
+    "pool_fits_1M": "PASS (1.01x — but flagged: too thin for daily drift)",
+    "ttft_100k": "PASS (-25.7% vs baseline; -9.5% vs 1024)",
+    "structured_pm3pct": "PASS (-0.7%)",
+    "prose_pm3pct": "PASS (+3.8%, improvement)",
+    "safety": "PASS (0 preempts, no NaN)"
+  },
+  "notes": "Operator decision at this point: adopt 2048 AND lower MAX_MODEL_LEN to 900000 for boot/concurrency stability margin (1.12x at 900k). 4096 skipped: predicted pool ~950-960k fits 900k but buys only ~10 s more TTFT for another ~60k pool margin — diminishing returns documented."
+}
