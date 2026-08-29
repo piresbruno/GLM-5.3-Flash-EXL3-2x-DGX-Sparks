@@ -9,10 +9,21 @@ IMAGE="${IMAGE:-ghcr.io/miaai-lab/glm-5.3-flash-2x-dgx-sparks:exl3}"
 WORKER_SSH_TARGET="${WORKER_SSH:-${WORKER_USER:-$USER}@${WORKER_IP:-}}"
 
 img_id() { docker image inspect -f '{{.Id}}' "$IMAGE" 2>/dev/null || echo null; }
+img_repo_digest() {
+  docker image inspect -f '{{if .RepoDigests}}{{index .RepoDigests 0}}{{end}}' "$IMAGE" 2>/dev/null || echo null
+}
 worker_img_id() {
   if [ -n "${WORKER_IP:-}" ]; then
     ssh -T -o BatchMode=yes -o ConnectTimeout=15 "$WORKER_SSH_TARGET" \
       "docker image inspect -f '{{.Id}}' '$IMAGE' 2>/dev/null" 2>/dev/null || echo null
+  else
+    echo null
+  fi
+}
+worker_repo_digest() {
+  if [ -n "${WORKER_IP:-}" ]; then
+    ssh -T -o BatchMode=yes -o ConnectTimeout=15 "$WORKER_SSH_TARGET" \
+      "docker image inspect -f '{{if .RepoDigests}}{{index .RepoDigests 0}}{{end}}' '$IMAGE' 2>/dev/null" 2>/dev/null || echo null
   else
     echo null
   fi
@@ -30,7 +41,10 @@ cat <<EOF
   "git_sha": "$(git rev-parse HEAD)",
   "image": $(jstr "$IMAGE"),
   "image_id": $(jstr "$(img_id)"),
+  "repo_digest": $(jstr "$(img_repo_digest)"),
   "worker_image_id": $(jstr "$(worker_img_id)"),
+  "worker_repo_digest": $(jstr "$(worker_repo_digest)"),
+  "_note": "rank images match if repo_digest == worker_repo_digest (same manifest). .Id may differ across docker-load paths — not a mismatch.",
   "env_fingerprint": {
     "MAX_MODEL_LEN": ${MAX_MODEL_LEN:-1000000},
     "GPU_MEM_UTIL": "${GPU_MEM_UTIL:-0.87}",
