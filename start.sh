@@ -450,6 +450,40 @@ post_init_cache_drop() {
     log "  head  : MemFree=$(memfree_gib local) GiB after drop"
 }
 
+# GLM53 numeric config guard (begin)
+_glm53_canonical_positive_int() {
+    local name="$1" value="$2" maximum="$3" canonical
+    if ! [[ "$value" =~ ^[0-9]+$ ]]; then
+        echo "$name must be a positive base-10 integer (got: $value)" >&2
+        return 2
+    fi
+    canonical="$value"
+    while [ "${canonical#0}" != "$canonical" ]; do canonical="${canonical#0}"; done
+    [ -n "$canonical" ] || canonical=0
+    if [ "$canonical" = 0 ] \
+       || [ "${#canonical}" -gt "${#maximum}" ] \
+       || [ "$canonical" -gt "$maximum" ]; then
+        echo "$name must be between 1 and $maximum (got: $value)" >&2
+        return 2
+    fi
+    printf -v "$name" '%s' "$canonical"
+    # $name is one of three fixed names below.
+    # shellcheck disable=SC2163
+    export "$name"
+}
+
+validate_numeric_config() {
+    if ! [[ "$GPU_MEM_UTIL" =~ ^(0([.][0-9]+)?|[.][0-9]+|1([.]0+)?)$ ]] \
+       || ! awk -v u="$GPU_MEM_UTIL" 'BEGIN { exit !(u > 0 && u <= 1) }'; then
+        echo "GPU_MEM_UTIL must be greater than 0 and at most 1 (got: $GPU_MEM_UTIL)" >&2
+        return 2
+    fi
+    _glm53_canonical_positive_int MAX_MODEL_LEN "$MAX_MODEL_LEN" 1000000 || return
+    _glm53_canonical_positive_int MAX_NUM_SEQS "$MAX_NUM_SEQS" 4096 || return
+    _glm53_canonical_positive_int MAX_NUM_BATCHED_TOKENS "$MAX_NUM_BATCHED_TOKENS" 8388608 || return
+}
+# GLM53 numeric config guard (end)
+
 banner() {
     local label="${1:-start.sh}"
     printf '\n'
@@ -1623,6 +1657,9 @@ logs() {
 # ------------------------------- main --------------------------------------
 main() {
     local cmd="${1:-start}"
+    case "$cmd" in
+        start|restart) validate_numeric_config ;;
+    esac
     case "$cmd" in
         stop)     banner stop.sh ;;
         download) banner download.sh ;;
