@@ -148,9 +148,24 @@ MASTER_PORT="${MASTER_PORT:-29521}"
 # before docker run on both nodes; WARN-only on failure. Opt out: SKIP_MEM_RITUAL=1
 SKIP_MEM_RITUAL="${SKIP_MEM_RITUAL:-0}"
 # C2 sidecar: flush page cache >40 GiB during weight load (25 min max).
+# Validated 2026-08-29 (D2 baseline boot): required on this kit — the load
+# window is a dice roll otherwise (MemFree 3.2 GiB idle floor, load pushes it
+# through zero; crash review 2026-08-29).
 CACHE_FLUSHER="${CACHE_FLUSHER:-0}"
+# D4: WEIGHTS_MODE=local (default; weights on both boxes, rsync) | nfs
+# (head reads the worker's cache over NFS — NFS-paced load avoids the measured
+# head wedge when a local NVMe read outruns UMA page-cache reclaim; the head
+# keeps its local copy, the point is load pacing). NFS_PORT = host port of
+# the worker's containerized export.
+WEIGHTS_MODE="${WEIGHTS_MODE:-local}"
+NFS_PORT="${NFS_PORT:-12049}"
+NFS_VOL_NAME="${NFS_VOL_NAME:-glm53-exl3-weights}"
+# D4: served thinking default. 1 = thinking on (pre-D4 behavior), 0 = off
+# (Entrpi-validated +7% structured acceptance; reasoning goes to
+# message.reasoning). Clients can still override per request.
+GLM53_DEFAULT_THINKING="${GLM53_DEFAULT_THINKING:-1}"
 
-MTP_TOKENS="${MTP_TOKENS:-2}"
+MTP_TOKENS="${MTP_TOKENS:-4}"  # D4: MTP fallback k=4 (Entrpi-measured 28.6 vs ~24.6 tok/s at k=2; k=5 regresses)
 # dflash (default, incoai/GLM-5.3-Flash-DFlash2, k=7) | mtp | none
 SPEC_METHOD="${SPEC_METHOD:-dflash}"
 DFLASH_MODEL="${DFLASH_MODEL:-incoai/GLM-5.3-Flash-DFlash2}"
@@ -386,6 +401,14 @@ preflight() {
     [ -f "$DRAFTER_PATCH_HOST" ] || die "$DRAFTER_PATCH_HOST missing"
     [ -f "$APC_PATCH_HOST" ] || die "$APC_PATCH_HOST missing"
     [ -f "$XGRAMMAR_PATCH_HOST" ] || die "$XGRAMMAR_PATCH_HOST missing"
+
+    case "$WEIGHTS_MODE" in
+        local|nfs) ;;
+        *) die "WEIGHTS_MODE=$WEIGHTS_MODE must be local or nfs (D4)" ;;
+    esac
+    if [ "$WEIGHTS_MODE" = "nfs" ]; then
+        warn "WEIGHTS_MODE=nfs: head reads weights over NFS from ${WORKER_IP}:${NFS_PORT} (erichough/nfs-server must be pullable on the worker)"
+    fi
 
     local need_kb=$((180 * 1024 * 1024)) avail
     mkdir -p "$HF_CACHE_DIR"
@@ -758,6 +781,13 @@ fi
 if [ -n "${CHAT_TEMPLATE:-}" ] && [ -f "${CHAT_TEMPLATE}" ]; then
     ARGS+=(--chat-template "${CHAT_TEMPLATE}")
 fi
+# D4: served thinking default (GLM53_DEFAULT_THINKING 1=on 0=off). Clients
+# can still override per request via chat_template_kwargs.
+if [ "${GLM53_DEFAULT_THINKING:-1}" = "1" ]; then
+    ARGS+=(--default-chat-template-kwargs '{"enable_thinking": true}')
+else
+    ARGS+=(--default-chat-template-kwargs '{"enable_thinking": false}')
+fi
 if [ "${LANGUAGE_MODEL_ONLY:-0}" = "1" ]; then
     ARGS+=(--language-model-only)
     say "language-model-only: no vision tower"
@@ -840,6 +870,13 @@ fi
 if [ -n "${CHAT_TEMPLATE:-}" ] && [ -f "${CHAT_TEMPLATE}" ]; then
     ARGS+=(--chat-template "${CHAT_TEMPLATE}")
 fi
+# D4: served thinking default (GLM53_DEFAULT_THINKING 1=on 0=off). Clients
+# can still override per request via chat_template_kwargs.
+if [ "${GLM53_DEFAULT_THINKING:-1}" = "1" ]; then
+    ARGS+=(--default-chat-template-kwargs '{"enable_thinking": true}')
+else
+    ARGS+=(--default-chat-template-kwargs '{"enable_thinking": false}')
+fi
 if [ "${LANGUAGE_MODEL_ONLY:-0}" = "1" ]; then
     ARGS+=(--language-model-only)
 else
@@ -916,6 +953,17 @@ launch_cache_flusher() {  # $1 = "remote" or "local"
   fi
 }
 
+ensure_worker_nfs_export() {  # D4: containerized NFS export of the worker HF cache
+  if worker_ssh "docker ps --format '{{.Names}}' | grep -q '^glm53-nfs\$'"; then
+    log "worker NFS export already up"
+    return 0
+  fi
+  log "starting worker NFS export of ${WORKER_CACHE_DIR} on :${NFS_PORT} ..."
+  worker_ssh "docker rm -f glm53-nfs 2>/dev/null; docker run -d --name glm53-nfs --restart unless-stopped --privileged -p ${NFS_PORT}:2049 -v '${WORKER_CACHE_DIR}:/export:ro' -v /lib/modules:/lib/modules:ro -e NFS_EXPORT_0='/export *(ro,no_subtree_check,fsid=0,insecure)' erichough/nfs-server" \
+    || die "NFS export container failed on the worker (WEIGHTS_MODE=nfs needs docker pull erichough/nfs-server on the worker)"
+  log "worker NFS export ready (${WORKER_IP}:${NFS_PORT})"
+}
+
 launch_cluster() {
     docker rm -f "$CONTAINER_HEAD" >/dev/null 2>&1 || true
     worker_ssh "docker rm -f '$CONTAINER_WORKER'" >/dev/null 2>&1 || true
@@ -956,6 +1004,7 @@ launch_cluster() {
         -e VLLM_CACHE_ROOT=/root/.cache/vllm
         -e "GLM53_SUPPRESS_STOPS_IN_REASONING=$GLM53_SUPPRESS_STOPS_IN_REASONING"
         -e "GLM53_MIXED_PREFILL_CHUNK=$GLM53_MIXED_PREFILL_CHUNK"
+        -e "GLM53_DEFAULT_THINKING=$GLM53_DEFAULT_THINKING"
         -e "TRITON_CACHE_DIR=$TRITON_CACHE_DIR"
         -e "TILELANG_CACHE_DIR=$TILELANG_CACHE_DIR"
         -e "VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS=$VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS"
@@ -1034,11 +1083,20 @@ launch_cluster() {
     log "starting head (vLLM API :${PORT}; NCCL if=${HEAD_CX7_IF} hca=${HEAD_CX7_IB}) ..."
     mem_ritual "head"
     launch_cache_flusher local
+    local head_hf_mounts=(-v "$HF_CACHE_DIR:/root/.cache/huggingface")
+    if [ "$WEIGHTS_MODE" = "nfs" ]; then
+        ensure_worker_nfs_export
+        docker volume create --driver local \
+            --opt type=nfs --opt "o=addr=${WORKER_IP},ro,vers=4.2,rsize=1048576,port=${NFS_PORT}" \
+            --opt device=:/ "$NFS_VOL_NAME" >/dev/null 2>&1 || true
+        head_hf_mounts=(-v "$NFS_VOL_NAME:/root/.cache/huggingface:ro")
+        log "head weights via NFS volume ${NFS_VOL_NAME} (${WORKER_IP}:${NFS_PORT})"
+    fi
     docker run -d --name "$CONTAINER_HEAD" \
         --gpus all --network host --ipc=host --shm-size 32g --stop-timeout 60 \
         --device /dev/infiniband --cap-add IPC_LOCK \
         --ulimit memlock=-1 --ulimit stack=67108864 \
-        -v "$HF_CACHE_DIR:/root/.cache/huggingface" \
+        "${head_hf_mounts[@]}" \
         -v "$CACHE_ROOT:/root/.cache/vllm" \
         -v "$TRITON_HOST_CACHE:/root/.triton/cache" \
         -v "$TILELANG_HOST_CACHE:/root/.tilelang/cache" \
@@ -1157,6 +1215,9 @@ on_ready() {
     [ "$SPEC_METHOD" = "dflash" ] && spec="DFlash2 k=${DFLASH_TOKENS} (${DFLASH_MODEL})"
     [ "$SPEC_METHOD" = "none" ] && spec=off
     log "  features   : tools=glm47+auto, reasoning=glm45, spec=${spec}, vision=${vision}"
+    log "  prefill    : max-num-batched-tokens=${MAX_NUM_BATCHED_TOKENS} (D1 spec-decode step budget — verify the boot log shows this number)"
+    log "  thinking   : served default=$( [ "${GLM53_DEFAULT_THINKING:-1}" = "1" ] && echo on || echo off ) (GLM53_DEFAULT_THINKING; clients can override)"
+    log "  weights    : mode=${WEIGHTS_MODE} (nfs => head reads ${WORKER_IP}:${NFS_PORT})"
     log "  quick test :"
     log "    curl -s http://127.0.0.1:${PORT}/v1/chat/completions \\"
     log "      -H 'Content-Type: application/json' \\"
