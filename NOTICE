@@ -1,0 +1,40 @@
+Ported components and their sources — campaign R1 (2026-08-30)
+
+The R1 ops kit and serving-config bundle in this repository were derived from
+the Reederey87 production kit — a downstream production fork of this recipe
+running the same container image digest
+(ghcr.io/miaai-lab/glm-5.3-flash-2x-dgx-sparks@sha256:9bb1557a4234fce63d59599e44d10747eabd742beb337eebf9e7070be8a0fd58),
+byte-identical overlays, and the same benchmark protocol. Its measured results
+(70.4 tok/s structured / 29.5 tok/s prose / ~893 tok/s prefill) are therefore
+configuration-level findings, ported here and re-gated by our own benches.
+
+Ported / derived in this campaign (all adapted to this kit's layout, ports and
+.env names; upstream file names in parentheses):
+
+  local/cache-burst.py            (cache-burst.py)   multi-session prefix-cache protocol
+  local/cache-probe.sh            (cache-probe.sh)   gate wrapper
+  tests/bench_prefix_cache.py     (bench_prefix_cache.py) AB-PLAN harness
+  local/acceptance.sh             (acceptance.sh)    7-probe quality battery
+  local/serving-probe.sh          (serving 6-probe)  liveness battery
+  local/toolcall-probe.py         (toolcall-probe.py) tool-call acceptance battery
+  local/xid-check.sh              (Xid monitor + timer)
+  local/metrics-alert.sh          (metrics-alert + timer) spec-decode acceptance alerting
+  local/check-updates.sh          (check-updates)    registry digest vs pin + 590.x driver warning
+  local/prod-start.sh             (prod-start.sh)    memory-gated restart + config-shape JIT wipe
+  fleet_watchdog.sh upgrades      (watchdog)         crash vs wedge vs deliberate-stop distinction
+  start.sh bundle knobs           (serving config)   MNBT 3584, long-prefill threshold 1792,
+                                                     VLLM_PREFIX_CACHE_RETENTION_INTERVAL=0,
+                                                     --no-async-scheduling, KV pin procedure,
+                                                     FLASHINFER_WORKSPACE_BASE persistence
+
+Not adopted from upstream (recorded deviations):
+  - Loopback bind (0.0.0.0 -> 127.0.0.1): REJECTED by operator — this kit keeps
+    the LAN bind; the unauthenticated-LAN exposure is documented in README.
+  - "MNBT < 3584 -> ~0% cache hits": contradicted by our measured 93% solo hits
+    at MNBT=1024 (D1 evidence); retention env, not MNBT alone, is treated as the
+    multi-session lever. MNBT=3584 adopted for the prefill benefit and re-gated
+    by our own cache probes.
+
+Upstream kit: Reederey87 (production fork of
+MiaAI-Lab/GLM-5.3-Flash-EXL3-2x-DGX-Sparks). Their measurements and operational
+procedures are referenced throughout docs/CAMPAIGN-R1.md.
