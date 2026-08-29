@@ -1,0 +1,48 @@
+{
+  "arm": "baseline-20260829-1559",
+  "date": "2026-08-29T16:00:00Z",
+  "decision": "BASELINE (D1 comparison target)",
+  "git_sha": "f249a23ed3cedf59f1997ace8a138cf44365f265",
+  "image_digest": "ghcr.io/miaai-lab/glm-5.3-flash-2x-dgx-sparks@sha256:9bb1557a4234fce63d59599e44d10747eabd742beb337eebf9e7070be8a0fd58",
+  "image_id": {"head": "sha256:9bb1557a4234", "worker": "sha256:ad0cdd86d1dd (snapshotter .Id artifact; RepoDigest identical on both ranks)"},
+  "temperature": {"bench_temp0": true},
+  "env_fingerprint": {
+    "MAX_MODEL_LEN": 1000000, "GPU_MEM_UTIL": "0.85", "CG_ESTIMATE": "0",
+    "MAX_NUM_BATCHED_TOKENS": 512, "MAX_NUM_SEQS": 4,
+    "DFLASH_TOKENS": 7, "DFLASH_DRAFT_TP": "1", "GLM53_MIXED_PREFILL_CHUNK": "skip",
+    "KV_CACHE_DTYPE": "fp8", "SPEC_METHOD": "dflash", "KV_CACHE_MEMORY": "",
+    "CACHE_FLUSHER": "1 (OLD trigger: Cached>40 GiB only — pre-D0-fix boot)",
+    "GLM53_DEFAULT_THINKING": "1", "LANGUAGE_MODEL_ONLY": "0", "SKIP_MM_PROFILING": "1",
+    "ENFORCE_EAGER": "0", "EXL3_FUSED_MOE": "1"
+  },
+  "boot": {
+    "max_num_scheduled_tokens": 512,
+    "kv_pool_tokens": 1262295,
+    "max_concurrency_at_1M": "1.26x",
+    "available_kv_gib": 11.79,
+    "padded_slot_share": "block=64 mla_page=2351104",
+    "boot_window_memavailable_floor_gib": {"head": 0.35, "worker": 4.78},
+    "cache_flusher": "ran on head (old trigger never fired: Cached stayed 28-29 GiB < 40 while MemFree dipped to 0.94 GiB); worker sidecar SILENTLY FAILED (script never shipped — fixed in f249a23)",
+    "boot_ok": true
+  },
+  "metrics": {
+    "structured_decode_tok_s": 66.28,
+    "structured_accept_ratio": 0.9588,
+    "structured_accepted_per_step": 6.712,
+    "structured_ttft_s": 0.456,
+    "prose_decode_tok_s": 26.60,
+    "prose_accept_ratio": 0.3217,
+    "prose_accepted_per_step": 2.252,
+    "longprompt_100k_ttft_ms_mean": 275687,
+    "longprompt_100k_decode_tok_s": 27.0,
+    "longprompt_100k_accept_ratio": 0.362,
+    "agg_x1_30k_ttft_ms": null,
+    "saturation_memfloor": "not measured (memfloor runs aborted by operator; re-measured per D1 arm)",
+    "preemptions": 0,
+    "nan_or_garbage": 0
+  },
+  "operator_lens": {
+    "llama_benchy": "user ran llama-benchy pp2048/tg128/depth 0 4096 8192/concurrency 1 2 4 runs 3 at 17:04; dashboard showed x1 62 agg, x2 88, x4 77, x6 90, x8 94; TTFT p95 217s (100k probe), ITL p95 0.286s, MTP accept 64.4%. Output JSON not captured (temp file)."
+  },
+  "notes": "Boot #1 = CACHE_FLUSHER-validated healthy boot (0.85/512, crash-review config). Load window survived: head MemAvailable floor 0.35 GiB (MemFree 0.94 GiB), recovered after load. D1 arms compare against this arm; D0 flusher fix (MemFree<8GiB trigger + worker scp) re-validated on D1-1024 boot."
+}
