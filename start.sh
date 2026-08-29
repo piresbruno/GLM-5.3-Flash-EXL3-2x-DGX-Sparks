@@ -124,6 +124,11 @@ TP="${TP:-2}"
 NNODES="${NNODES:-2}"
 PORT="${PORT:-8888}"
 MASTER_PORT="${MASTER_PORT:-29521}"
+# C2: GB10 memory ritual (drop_caches + compact + swappiness=0 + swap cycle)
+# before docker run on both nodes; WARN-only on failure. Opt out: SKIP_MEM_RITUAL=1
+SKIP_MEM_RITUAL="${SKIP_MEM_RITUAL:-0}"
+# C2 sidecar: flush page cache >40 GiB during weight load (25 min max).
+CACHE_FLUSHER="${CACHE_FLUSHER:-0}"
 
 MTP_TOKENS="${MTP_TOKENS:-2}"
 # dflash (default, incoai/GLM-5.3-Flash-DFlash2, k=7) | mtp | none
@@ -835,6 +840,44 @@ EOF
 }
 
 # ------------------------------- launch ------------------------------------
+mem_ritual() {  # $1 = label, $2 = "remote" for the worker node
+  local label="$1" where="${2:-local}"
+  if [ "${SKIP_MEM_RITUAL:-0}" = "1" ]; then
+    log "$label: memory ritual skipped (SKIP_MEM_RITUAL=1)"
+    return 0
+  fi
+  log "$label: GB10 memory ritual (drop_caches, compact, swappiness=0, swap cycle) ..."
+  local cmd='sync
+    echo 3 | sudo -n tee /proc/sys/vm/drop_caches >/dev/null 2>&1 || echo "WARN: drop_caches failed (sudo -n?)"
+    echo 1 | sudo -n tee /proc/sys/vm/compact_memory >/dev/null 2>&1 || echo "WARN: compact_memory failed"
+    sysctl -w vm.swappiness=0 >/dev/null 2>&1 || echo "WARN: swappiness=0 failed"
+    if ! grep -qs "^vm.swappiness=0" /etc/sysctl.d/90-glm53.conf 2>/dev/null; then
+      echo "vm.swappiness=0" | sudo -n tee /etc/sysctl.d/90-glm53.conf >/dev/null 2>&1 || echo "WARN: could not persist /etc/sysctl.d/90-glm53.conf (reboot reverts swappiness!)"
+    fi
+    if command -v swapon >/dev/null 2>&1 && [ -n "$(swapon --show 2>/dev/null)" ]; then
+      sudo -n swapoff -a >/dev/null 2>&1 && sudo -n swapon -a >/dev/null 2>&1 || echo "WARN: swap cycle failed"
+    fi
+    grep -E "MemFree|MemAvailable" /proc/meminfo | head -2'
+  local out
+  if [ "$where" = "remote" ]; then
+    out=$(worker_ssh "$cmd" 2>&1) || out="$out
+WARN: worker_ssh ritual failed"
+  else
+    out=$(bash -c "$cmd" 2>&1)
+  fi
+  log "$label ritual: $(echo "$out" | tr '\n' ' ' | tr -s ' ')"
+}
+
+launch_cache_flusher() {  # $1 = "remote" or "local"
+  [ "${CACHE_FLUSHER:-0}" = "1" ] || return 0
+  if [ "${1:-local}" = "remote" ]; then
+    worker_ssh "nohup bash /tmp/cache_flusher.sh >/dev/null 2>&1 & echo sidecar up"
+  else
+    nohup bash "$SCRIPT_DIR/cache_flusher.sh" >/dev/null 2>&1 &
+    echo "sidecar up (pid $!)"
+  fi
+}
+
 launch_cluster() {
     docker rm -f "$CONTAINER_HEAD" >/dev/null 2>&1 || true
     worker_ssh "docker rm -f '$CONTAINER_WORKER'" >/dev/null 2>&1 || true
@@ -923,6 +966,8 @@ launch_cluster() {
     done
 
     log "starting worker on ${WORKER_SSH} (NCCL if=${WORKER_CX7_IF} hca=${WORKER_CX7_IB}) ..."
+    mem_ritual "worker" "remote"
+    launch_cache_flusher remote
     worker_ssh "docker run -d --name '$CONTAINER_WORKER' \
         --gpus all --network host --ipc=host --shm-size 32g --stop-timeout 60 \
         --device /dev/infiniband --cap-add IPC_LOCK \
@@ -949,6 +994,8 @@ launch_cluster() {
         --entrypoint bash '$IMAGE' /start.sh" >/dev/null
 
     log "starting head (vLLM API :${PORT}; NCCL if=${HEAD_CX7_IF} hca=${HEAD_CX7_IB}) ..."
+    mem_ritual "head"
+    launch_cache_flusher local
     docker run -d --name "$CONTAINER_HEAD" \
         --gpus all --network host --ipc=host --shm-size 32g --stop-timeout 60 \
         --device /dev/infiniband --cap-add IPC_LOCK \
