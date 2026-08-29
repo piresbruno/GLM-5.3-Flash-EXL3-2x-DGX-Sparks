@@ -1,5 +1,19 @@
 # Perf research: what's left to win (2026-08-29)
 
+> **R1 update (2026-08-30):** the campaign ran. The Reederey87 bundle was
+> adopted as the new serving config (MNBT 3584 page-exact,
+> long-prefill threshold 1792, `VLLM_PREFIX_CACHE_RETENTION_INTERVAL=0`,
+> async OFF via `ASYNC_SCHEDULING=0`, FlashInfer JIT workspace persisted,
+> digest-pinned image, KV-pin procedure via `--kv-cache-memory-bytes`).
+> Verdicts below that are superseded: P0-1 (DSD) is armed as the follow-on
+> concurrency arm on top of the bundle — requires `ASYNC_SCHEDULING=1` and
+> pin OFF (async double-counts the SW-family reservation under a pin),
+> enforced by `dsd_validate` since the R1 implementation pass. P0-2 is
+> resolved OPPOSITE to the earlier guess: their A/B measured async-off at or
+> above async-on at ×1 (structured 69.8 vs 67.4), so the bundle ships async
+> OFF and the DSD arm must win back the async cost at ×2–×4 or stays
+> default-off. See `docs/CAMPAIGN-R1.md` for the pending on-GPU gates.
+
 Scope: further decode/prefill/throughput improvements for this recipe, researched
 against the current upstream (vLLM main, FlashInfer, SGLang, GB10-specific findings)
 **and** verified directly inside the live `:exl3` image (`vllm 0.1.dev20051+g487ecf187`).

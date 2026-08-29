@@ -2,6 +2,48 @@
 
 Campaign branch: `checkpoint-d1-baseline` (main parked at f249a23).
 Comparison source: `docs/COMPARISON-ENTRPI.md`.
+R1 campaign runbook: `docs/CAMPAIGN-R1.md` (Reederey87 bundle adoption + DSD
+concurrency arm; ported components credited in `NOTICE`).
+
+## R1 bundle — implementation status (2026-08-30)
+
+The Reederey87 production kit (same image digest `9bb1557a…`, byte-identical
+overlays, same bench protocol) measures 70.4 tok/s structured / 29.5 prose /
+~893 tok/s prefill vs our recorded 65.9 / 26.7 / ~489 — configuration-level
+wins, ported and re-gated.
+
+**Implemented + offline-verified (this pass):**
+- Phase 0 (partial): driver 580.173.02 confirmed on BOTH nodes (580.x branch,
+  no downgrade); CX7 ports ACTIVE/200Gb with all error counters 0 on the
+  pinned rail; second rail (`rocepP2p1s0f1` class) also active on both nodes
+  (dual-rail A/B seed). 30-min `ib_write_bw` soak still required before
+  Phase 2. Digest pin + `SKIP_PULL=1` live in `.env`.
+- C1 serving config: MNBT 3584 (page-exact), `LONG_PREFILL_TOKEN_THRESHOLD`
+  1792 emitted as `--long-prefill-token-threshold` on both ranks (outside
+  EXTRA_ARGS), `VLLM_PREFIX_CACHE_RETENTION_INTERVAL=0` forwarded to both
+  ranks (non-empty only — an empty string crashes the fork's env parser),
+  `--no-async-scheduling` via the `ASYNC_SCHEDULING` knob (0=off bundle /
+  1=on DSD / auto=baseline), `FLASHINFER_WORKSPACE_BASE` inside the mounted
+  vLLM cache, KV pin via the exact `--kv-cache-memory-bytes` flag (quoted),
+  digest-pinned `IMAGE` + `SKIP_PULL=1` + BUILD-refuse guard, driver-branch
+  preflight gate (590.x refuses to boot).
+- C2 ops kit: `local/` (cache-burst/cache-probe/acceptance/serving-probe/
+  toolcall-probe/xid-check/metrics-alert/check-updates/prod-start + systemd
+  user units + installer), watchdog upgrade (crash vs wedge vs deliberate-stop
+  + 900 s backoff + optional liveness probe), `NOTICE` attribution.
+- C3 wiring tests: `tests/test_r1_bundle.py` 11/11 (inner-script argv executed
+  with a stubbed vllm; .env digest-pin assertions; launch/stop/watchdog
+  wiring), `tests/test_dsd_wiring.py` 7/7 (now also enforces
+  DSD-requires-async), override-capture tests passing.
+
+**Pending (on-GPU, runbook `docs/CAMPAIGN-R1.md`):** Phase 2 bundle A/B
+(re-benched baseline arm vs R1 arm, interleaved, gates in the runbook),
+Phase 3 DSD concurrency arm (`DSD_TABLE=1:1:7,2:999:5 ASYNC_SCHEDULING=1`,
+pin off — recorded deviation), Phase 4 ops activation + `recipe-r1-<date>`
+tag. Recorded deviations from upstream: loopback bind NOT adopted (operator
+keeps LAN; exposure documented in README); "MNBT < 3584 → ~0% hits" not
+adopted blind (our 93% solo hits at MNBT=1024 contradict it — retention env
+is the multi-session lever, re-gated by our own cache probes).
 
 ## Verdict table
 

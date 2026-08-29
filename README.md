@@ -247,6 +247,63 @@ This 1M boot: **1,670,157** tokens / **1.67×** / 638 GPU blocks (padded
 slot-share still applied). The 900k process measured 1,754,237 / 690 blocks
 on the same recipe; the delta is leftover UMA, not a slot-share collapse.
 
+## Campaign R1 — production bundle (2026-08-30)
+
+The Reederey87 production kit (a downstream fork of this recipe on the **same
+image digest**, same overlays, same bench protocol) measures **70.4 tok/s
+structured / 29.5 prose / ~893 tok/s prefill** against our recorded
+65.9 / 26.7 / ~489. Those wins are configuration-level. R1 adopts the full
+bundle and re-gates every claim with our own benches (`docs/CAMPAIGN-R1.md`);
+ported components are credited in `NOTICE`.
+
+**Serving-config bundle** (all default in `start.sh` + `.env`):
+
+| Knob | R1 value | Why |
+|---|---|---|
+| `MAX_NUM_BATCHED_TOKENS` | `3584` | page-exact prefill chunks (14 × 256-token pages) |
+| `LONG_PREFILL_TOKEN_THRESHOLD` | `1792` | requests above it take the long-prefill scheduling path; half the step budget, emitted as `--long-prefill-token-threshold` directly (never via `EXTRA_ARGS`) |
+| `ASYNC_SCHEDULING` | `0` | async scheduling **off** in the bundle (their A/B: async-off ≥ async-on at ×1). The DSD arm sets `ASYNC_SCHEDULING=1` — `start.sh` refuses `DSD_TABLE` without it |
+| `VLLM_PREFIX_CACHE_RETENTION_INTERVAL` | `0` | sparse KDA retention (fork env): retain only prompt boundaries + shared-prefix junctions; forwarded to **both ranks**, only when non-empty (an empty string crashes boot) |
+| `FLASHINFER_WORKSPACE_BASE` | `/root/.cache/vllm/flashinfer` | FlashInfer JIT workspace inside the mounted vLLM cache — kernels survive container recreate; watchdog heals pay no re-JIT |
+| `IMAGE` | `…@sha256:9bb1557a…` | digest pin + `SKIP_PULL=1`: a restart can never silently upgrade. `BUILD=1` with a digest ref is refused |
+| `KV_CACHE_MEMORY` | *(measure then pin)* | boot once **unpinned**, read vLLM's suggested budget (on_ready receipt prints it), pin at (suggested − margin), never raise. Gate: 3 cold boots with a byte-identical pool line |
+
+**DSD concurrency arm (D5, on top of R1):** `DSD_TABLE=1:1:7,2:999:5
+ASYNC_SCHEDULING=1 ./start.sh restart` — async ON, **pin OFF** (auto pool;
+recorded deviation: under a KV pin, async double-counts the SW-family
+reservation and can fail the admission check). Receipt: `python3
+tests/verify_dsd.py`. DSD survives as default-on only if it beats the R1
+bundle at ×2/×4 by ≥3% without regressing ×1 (the async cost may offset —
+their A/B measured async-off 69.8 vs async-on 67.4 structured).
+
+**Security note (recorded operator decision):** the API binds `0.0.0.0` —
+vLLM's OpenAI server has **no authentication** (`VLLM_API_KEY` unset), so
+everything on the LAN can query the fleet and the metrics endpoint. The
+upstream kit's loopback-bind hardening was deliberately **not** adopted; if
+that ever changes, set the bind in the inner scripts and re-run the serving
+probes. Interim mitigations: firewall the head port (`PORT`), or front it
+with an authenticating proxy.
+
+**Ops kit** (`local/`, ported — see `NOTICE`):
+
+| Tool | Purpose |
+|---|---|
+| `local/serving-probe.sh` | 6-probe serving liveness battery (health/models/chat/stream/tools/metrics) |
+| `local/acceptance.sh` | 7-probe quality battery (tools / thinking / vision / needle ×3 incl. cache-aware replay) |
+| `local/toolcall-probe.py` | tool-call acceptance battery (5 cases × N reps) |
+| `local/cache-burst.py` + `local/cache-probe.sh` | multi-session cache gates: 4×60k ×3 rounds hit ≥90%, solo 110k replay ≥93% |
+| `tests/bench_prefix_cache.py` | the same protocols wired into an AB-PLAN arm artifact (fingerprint + gates) |
+| `local/xid-check.sh` | NVRM Xid monitor (fatal classes 13/31/43/45/48/62/79) — timer-friendly |
+| `local/metrics-alert.sh` | spec-decode acceptance alerting from `/metrics` (consecutive-strike model) |
+| `local/check-updates.sh` | registry digest vs `.env` pin + 590.x driver warning (Phase-0 gate, automated) |
+| `local/prod-start.sh` | memory-gated restart (MemFree ≥ 8 GiB both nodes) + config-shape hash that wipes stale JIT caches on geometry change |
+| `local/install-ops-units.sh` | installs the systemd **user** units (timers default OFF; `--enable` is the operator-approved Phase-4 step) |
+
+The watchdog now distinguishes **crash** (container gone → immediate recover),
+**wedge** (running but `/health` failing, optional `WATCHDOG_LIVENESS=1`
+decode probe) and **deliberate stop** (`./start.sh stop` writes a sentinel
+the watchdog honors; any launch clears it), with a 900 s recovery backoff.
+
 ## Quick start (2× Spark)
 
 ```bash
@@ -365,7 +422,7 @@ that are now documented/enforced:
 | `MODEL` | `Mia-AiLab/GLM-5.3-Flash-EXL3-TR3-4bpw` | Hub repo into the HF cache (mirror) |
 | `MODEL_FALLBACK` | `brandonmusic/GLM-5.3-Flash-tr3-4bpw` | Used if the mirror 404s or has fewer than 120 shards |
 | `SERVED_MODEL_NAME` | `GLM-5.3-Flash-EXL3` | OpenAI `model` id (`/v1/models`) |
-| `IMAGE` | `ghcr.io/miaai-lab/glm-5.3-flash-2x-dgx-sparks:exl3` | public GHCR tag; pulled on every start. `SKIP_PULL=1` skips. `BUILD=1` rebuilds the overlay |
+| `IMAGE` | `ghcr.io/miaai-lab/glm-5.3-flash-2x-dgx-sparks:exl3` | public GHCR tag; pulled on every start. `SKIP_PULL=1` skips. `BUILD=1` rebuilds the overlay. R1: pin the exact digest (`…@sha256:…`) + `SKIP_PULL=1` so a restart can never silently upgrade; `BUILD=1` with a digest ref is refused |
 | `GHCR_TOKEN` / `GHCR_USER` | *(unset)* | optional login if anonymous GHCR pull is rate-limited |
 | `PORT` | `8888` | OpenAI API on the head |
 | `TP` / `NNODES` | `2` / `2` | do not change for this recipe |
@@ -374,17 +431,22 @@ that are now documented/enforced:
 | `SPEC_METHOD` | `dflash` | `dflash` / `mtp` / `none`. Rollback: `SPEC_METHOD=mtp ./start.sh restart` |
 | `DFLASH_MODEL` | `incoai/GLM-5.3-Flash-DFlash2` | DFlash2 draft Hub repo (~2.3 GiB BF16) |
 | `DFLASH_TOKENS` | `7` | DFlash2 speculative tokens (trained block 8) |
-| `DSD_TABLE` | *(unset)* | D5: Dynamic Speculative Decoding (vLLM PR #32374, present in this image). `start_bs:end_bs:k,...` draft-length schedule; e.g. `1:1:7,2:999:5` = k7 solo, k5 from 2 concurrent. Empty = static k. Requires AsyncScheduler+V2 (auto on this kit): the scheduler sizes draft placeholders per step and trims the drafter's static-7 output to K — no drafter patch. Verify shapes `seq*(1+K)` are captured by a DSD-derived ladder (`12 18 24` replace `16 32`). Receipt: `python3 tests/verify_dsd.py` |
+| `DSD_TABLE` | *(unset)* | D5: Dynamic Speculative Decoding (vLLM PR #32374, present in this image). `start_bs:end_bs:k,...` draft-length schedule; e.g. `1:1:7,2:999:5` = k7 solo, k5 from 2 concurrent. Empty = static k. Requires `ASYNC_SCHEDULING=1` (enforced) + KV pin OFF (recorded R1 deviation). Verify shapes `seq*(1+K)` are captured by a DSD-derived ladder (`12 18 24` replace `16 32`). Receipt: `python3 tests/verify_dsd.py` |
 | `DFLASH_DRAFT_TP` | `1` | keep the 2.3 GiB drafter on rank 0 (no CX7 per draft step). Empty = inherit TP |
 | DFlash2 draft KV | `auto` (bf16) | target stays `fp8`/`fp8_ds_mla`; dense draft has no MLA FP8 backend on SM121 |
 | DFlash2 attention | *(unset)* | SM121 picks FLASH_ATTN for non-causal SWA. Do not pin `TRITON_ATTN` |
 | `ENFORCE_EAGER` | `0` | CUDA graphs; MTP capture `1 2 3 4 6 8 12`, DFlash2 `1 2 4 8 16 24 32` |
 | `EXL3_FUSED_MOE` | `1` | `exl3_moe` per layer; `0` = LinearEXL3 loop |
 | `KV_CACHE_DTYPE` | `fp8` | packed `fp8_ds_mla`; not `nvfp4`, not bf16 |
-| `GPU_MEM_UTIL` | `0.87` | GB10 UMA budget (DFlash2 + vision; live pool **1,754,237** tokens / **1.75×** at 1M / 690 blocks / 18.67 GiB) |
+| `GPU_MEM_UTIL` | `0.85` | GB10 UMA budget — hard ceiling (crash review: >0.85 froze both nodes; start.sh refuses). The live pool at 600k window gives ~1.6× concurrency margin |
 | `MAX_MODEL_LEN` | `600000` | Operator decision (2026-08-29, DSD campaign): 600k window — same UMA pool gives ~1.6× concurrency margin (was 1.08× at 900k). Do not drop to 256k to “free” KV — logged tokens ≈ concurrency × this cap; hybrid block-id overhead then shrinks the pool |
 | `MAX_NUM_SEQS` | `4` | decode batch; MTP adds k+1 tokens/seq |
-| `MAX_NUM_BATCHED_TOKENS` | `2048` | D1-adopted (2026-08-29, ladder 512→1024→2048): spec-decode step budget, engine honors it (vllm.py:1849 warns <8192 but does not clamp). 100k TTFT −25.7% vs 512, decode unchanged; KV pool cost 1,262k→1,012k tokens. 8192 oversubscribes GB10 indexer topk; 4096 skipped (diminishing). Raising further shrinks the pool — re-run the D1 gate + memfloor |
+| `MAX_NUM_BATCHED_TOKENS` | `3584` | R1 bundle (page-exact, 14 × 256-token pages; was D1's 2048, ladder 512→1024→2048). Spec-decode step budget; 8192 oversubscribes GB10 indexer topk. Raising further shrinks the pool — re-run the D1 gate + memfloor |
+| `LONG_PREFILL_TOKEN_THRESHOLD` | `1792` | R1 bundle: requests above this take the long-prefill scheduling path; emitted as `--long-prefill-token-threshold` directly (never via `EXTRA_ARGS`). Empty = scheduler default (cap off) |
+| `ASYNC_SCHEDULING` | `0` | R1 bundle: `0` = `--no-async-scheduling` (bundle baseline), `1` = `--async-scheduling` (DSD arm), `auto` = pass neither (vLLM decides). `start.sh` refuses `DSD_TABLE` without `1` |
+| `VLLM_PREFIX_CACHE_RETENTION_INTERVAL` | `0` | R1 bundle: sparse KDA retention (fork env) — `0` retains only prompt boundaries + shared-prefix junctions; unset/empty = dense. Forwarded to both ranks only when non-empty (empty string crashes boot) |
+| `FLASHINFER_WORKSPACE_BASE` | `/root/.cache/vllm/flashinfer` | R1 bundle: FlashInfer JIT workspace inside the mounted vLLM cache — survives container recreate |
+| `KV_CACHE_MEMORY` | *(unset)* | R1 pin procedure: boot unpinned, read the suggested budget (on_ready receipt), pin at (suggested − margin), never raise. Emits `--kv-cache-memory-bytes "N"` (quoted) |
 | `GLM53_MIXED_PREFILL_CHUNK` | `skip` | do not mix a peer prefill into a decode step (issue #6). `N>0` = cap tokens; `0` = off. Solo prefill stays 1024 |
 | `GLM53_SUPPRESS_STOPS_IN_REASONING` | `1` | ignore client `stop` strings until `</think>` (thinking-on default) |
 | `GLM53_BOOT_SHAPE_WARMUP` | `1` | after `/health`, burn DFlash2 BLOCK / sampler / kpool shapes (nonfatal) |
