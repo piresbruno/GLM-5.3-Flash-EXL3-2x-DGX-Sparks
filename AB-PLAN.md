@@ -168,6 +168,12 @@ auto-resolve as optional change C5 in Phase 3.
   step, the indexer's large fixed per-step cost) — this is the direct pp/TTFT lever:
   measured TTFT ≈ prompt_tokens ÷ pp tok/s, i.e. prefill-bound end to end.
 - `.env`/`.env.example` comment + README row change; no code.
+- **MEASURED (2026-08-29, this kit): REJECTED as env-only.** The engine clamps
+  `max_num_scheduled_tokens` to 1024 "based on the speculative decoding settings"
+  (vllm.py:1849) regardless of the env — the boot config itself shows 1024, and
+  long-prompt TTFT is identical to baseline (8539 vs 8536 ms). C6 requires a
+  scheduler overlay patch raising the spec-decode step-budget override (fail-closed,
+  same pattern as the decode-floor overlay); re-gate with the long-prompt probe.
 
 ### C7 — DFlash2 draft length `DFLASH_TOKENS` 7 → 4 (or 5) · MED (tg/responsiveness)
 - At the prose/agent acceptance regime (~0.33–0.41 measured on this kit), k=7 wastes later
@@ -175,12 +181,19 @@ auto-resolve as optional change C5 in Phase 3.
   drafted tokens per verify step can raise effective tok/s and cut per-step latency.
 - Hard constraint: `num_speculative_tokens ≤ block_size − 1 = 7` (k=8 drafts an untrained
   position). Gate must include the structured/high-acceptance regime, where k=7 wins.
+- **MEASURED (2026-08-29, this kit):** k=5 at temp 0 — c2 **+7.1%**, c4 **+5.4%** aggregate
+  on mixed prompts, but structured **−19.0%** (0.918-accept regime loses ~2 tok/step) →
+  **gate FAIL; keep k=7 as default.** `DFLASH_TOKENS` is workload-dependent, not shippable
+  as a re-pin. Note: the 1024 scheduled-token clamp persists at k=5, so k<7 does **not**
+  relax the C6 budget (that hypothesis is dead too).
 
 ### C8 — `LANGUAGE_MODEL_ONLY=1` (text-only serving) · LOW-MED
 - Vision requests get no spec-decode speedup anyway (drafter is text-only), and the vision
   tower is pure allocation pressure on the UMA. If the benchmark/serving workload is
   text-only, `=1` frees several GiB → KV headroom + boot stability.
-- Only evaluated if the workload really is text-only; otherwise skip.
+- Only evaluated if the workload really is text-only; otherwise skip. Baseline is
+  collected **with vision on** (`LANGUAGE_MODEL_ONLY=0`); the vision probe
+  (`tests/bench_vision.py`) is the before/after for this arm.
 
 **Phase gate:** each change committed separately; `BUILD=1` boot clean + self-checks pass
 for C1; `bash -n` + dry-run for C2–C8 (C6–C8 are env-only: verify via `docker exec ... env`).
@@ -202,6 +215,7 @@ rule 4. Metrics per arm:
 | Acceptance (drafted/accepted) | `/metrics` or bench output | ±2 pt |
 | TTFT / boot-to-ready | timing | record only |
 | Prefix-cache hit rate on follow-ups | `/metrics` `gpu_prefix_cache_*` | ≥ baseline (issue #7 guard) |
+| Vision decode tok/s + TTFT (warm) | `tests/bench_vision.py` | record; correctness 3/3, no NaN. Spec-decode-exempt (drafter is text-only) — do NOT judge C7 k-tuning by vision numbers |
 | Preemptions | `/metrics` | **0** |
 | NaN / garbage logits | smoke + coherence check | none |
 
