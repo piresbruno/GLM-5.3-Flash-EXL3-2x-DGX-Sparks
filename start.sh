@@ -75,6 +75,7 @@ _cli_cg="${CG_ESTIMATE-}"
 _cli_max_len="${MAX_MODEL_LEN-}"
 _cli_mixed="${GLM53_MIXED_PREFILL_CHUNK-}"
 _cli_flusher="${CACHE_FLUSHER-}"
+_cli_dsd="${DSD_TABLE-}"
 set -a
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/.env"
@@ -96,6 +97,7 @@ set +a
 [ -n "${_cli_max_len}" ] && MAX_MODEL_LEN="$_cli_max_len"
 [ -n "${_cli_mixed}" ] && GLM53_MIXED_PREFILL_CHUNK="$_cli_mixed"
 [ -n "${_cli_flusher}" ] && CACHE_FLUSHER="$_cli_flusher"
+[ -n "${_cli_dsd}" ] && DSD_TABLE="${_cli_dsd}"
 
 # ----------------------------- configuration -------------------------------
 MODEL="${MODEL:-Mia-AiLab/GLM-5.3-Flash-EXL3-TR3-4bpw}"
@@ -197,6 +199,72 @@ fi
 MAX_NUM_SEQS="${MAX_NUM_SEQS:-4}"
 # 8192 chunk × long history oversubscribes GB10 persistent_topk smem (300k crash).
 MAX_NUM_BATCHED_TOKENS="${MAX_NUM_BATCHED_TOKENS:-1024}"
+
+# ---- D5: dynamic speculative decoding (DSD) --------------------------------
+# vLLM Dynamic SD (PR #32374, present in this image): per-batch-size draft
+# length. Empty = OFF (static k=DFLASH_TOKENS; byte-identical to pre-D5).
+# Format "start_bs:end_bs:k,...", e.g. DSD_TABLE=1:1:7,2:999:5 (k=7 solo,
+# k=5 from 2 concurrent). Active path on this kit: AsyncScheduler sizes the
+# per-step draft placeholders from the table (num_spec_tokens_to_schedule)
+# and update_draft_token_ids_in_output trims the drafter's static-k output
+# to it -> the drafter keeps proposing k=7 (no drafter patch) while the
+# verify batch runs 1+K. Verify-shape graphs: seq*(1+K) per table row.
+DSD_TABLE="${DSD_TABLE:-}"
+
+dsd_k_for() {
+    # K for a batch size (table MUST be dsd_validate'd first).
+    local bs="$1" e rest start end k
+    for e in $(printf '%s' "$DSD_TABLE" | tr ',' ' '); do
+        start=${e%%:*}; rest=${e#*:}; end=${rest%%:*}; k=${rest##*:}
+        [ "$bs" -ge "$start" ] && [ "$bs" -le "$end" ] && { echo "$k"; return; }
+    done
+    echo "$DFLASH_TOKENS"
+}
+
+dsd_validate() {
+    # Dies on any malformation; empty table is a valid no-op (DSD off).
+    [ -n "$DSD_TABLE" ] || return 0
+    [ "$SPEC_METHOD" = "dflash" ] || die "DSD_TABLE requires SPEC_METHOD=dflash (got $SPEC_METHOD)"
+    local e rest start end k prev_end=0 count=0
+    for e in $(printf '%s' "$DSD_TABLE" | tr ',' ' '); do
+        count=$((count + 1))
+        case "$e" in
+            *[!0-9:]*) die "DSD_TABLE entry '$e' malformed (want start:end:k)" ;;
+        esac
+        case "$(printf '%s' "$e" | tr -cd ':' | wc -c)" in
+            2) ;;
+            *) die "DSD_TABLE entry '$e' malformed (want start:end:k)" ;;
+        esac
+        start=${e%%:*}; rest=${e#*:}; end=${rest%%:*}; k=${rest##*:}
+        [ "$start" -ge 1 ] || die "DSD_TABLE batch sizes are 1-based ('$e')"
+        [ "$start" -le "$end" ] || die "DSD_TABLE inverted range ('$e')"
+        [ "$start" -eq "$((prev_end + 1))" ] || die "DSD_TABLE ranges must be contiguous from 1 ('$e' after end=$prev_end)"
+        [ "$k" -ge 1 ] || die "DSD_TABLE k must be >= 1 ('$e')"
+        [ "$k" -le "$DFLASH_TOKENS" ] || die "DSD_TABLE k=$k exceeds trained block DFLASH_TOKENS=$DFLASH_TOKENS ('$e')"
+        [ "$k" -le 7 ] || die "DSD_TABLE k=$k exceeds the trained DFlash2 block (8 slots = k 7)"
+        prev_end=$end
+    done
+    [ "$prev_end" -ge "$MAX_NUM_SEQS" ] || die "DSD_TABLE must cover 1..MAX_NUM_SEQS=$MAX_NUM_SEQS (last range ends at $prev_end)"
+    [ "$count" -le 8 ] || die "DSD_TABLE: too many ranges ($count); keep the ladder small"
+    return 0
+}
+
+dsd_capture_sizes() {
+    # Target verify-shape graph ladder: union of the piecewise base sizes and
+    # seq*(1+K) per concurrency 1..MAX_NUM_SEQS. Replaces the static
+    # 1 2 4 8 16 24 32 ladder (16/32 unreachable under DSD; 12/18/24 new).
+    local out="1 2 4" s k size
+    s=1
+    while [ "$s" -le "$MAX_NUM_SEQS" ]; do
+        k=$(dsd_k_for "$s")
+        size=$(( s * (k + 1) ))
+        out="$out $size"
+        s=$((s + 1))
+    done
+    printf '%s\n' $out | sort -n -u | tr '\n' ' ' | sed 's/ $//'
+}
+# ---- end D5 -----------------------------------------------------------------
+dsd_validate
 CHAT_TEMPLATE_HOST="${CHAT_TEMPLATE_HOST:-$SCRIPT_DIR/files/chat_template.jinja}"
 CHAT_TEMPLATE="${CHAT_TEMPLATE:-/opt/glm53/chat_template.jinja}"
 VIDEO_PATCH_HOST="${VIDEO_PATCH_HOST:-$SCRIPT_DIR/overlay/patch_glm_video_placeholders.py}"
@@ -224,7 +292,11 @@ if [ "${ENFORCE_EAGER}" != "1" ]; then
         *" --cudagraph-capture-sizes "*|*" cudagraph-capture-sizes "*) ;;
         *)
             if [ "$SPEC_METHOD" = "dflash" ]; then
-                EXTRA_ARGS="${EXTRA_ARGS:+$EXTRA_ARGS }--cudagraph-capture-sizes 1 2 4 8 16 24 32"
+                if [ -n "$DSD_TABLE" ]; then
+                    EXTRA_ARGS="${EXTRA_ARGS:+$EXTRA_ARGS }--cudagraph-capture-sizes $(dsd_capture_sizes)"
+                else
+                    EXTRA_ARGS="${EXTRA_ARGS:+$EXTRA_ARGS }--cudagraph-capture-sizes 1 2 4 8 16 24 32"
+                fi
             else
                 EXTRA_ARGS="${EXTRA_ARGS:+$EXTRA_ARGS }--cudagraph-capture-sizes 1 2 3 4 6 8 12"
             fi
@@ -772,6 +844,11 @@ spec={"method":"dflash","model":os.environ["DFLASH_MODEL_DIR"],"num_speculative_
 tp=os.environ.get("DFLASH_DRAFT_TP","").strip()
 if tp:
     spec["draft_tensor_parallel_size"]=int(tp)
+# D5 dynamic speculative decoding: per-batch-size K table (vLLM PR #32374).
+# Launcher validated the format (dsd_validate); empty = static k, unchanged.
+dsd=os.environ.get("DSD_TABLE","").strip()
+if dsd:
+    spec["num_speculative_tokens_per_batch_size"]=[[int(x) for x in e.split(":")] for e in dsd.split(",")]
 print(json.dumps(spec,separators=(",",":")))')")
 elif [ "${SPEC_METHOD:-mtp}" = "none" ]; then
     :
@@ -861,6 +938,11 @@ spec={"method":"dflash","model":os.environ["DFLASH_MODEL_DIR"],"num_speculative_
 tp=os.environ.get("DFLASH_DRAFT_TP","").strip()
 if tp:
     spec["draft_tensor_parallel_size"]=int(tp)
+# D5 dynamic speculative decoding: per-batch-size K table (vLLM PR #32374).
+# Launcher validated the format (dsd_validate); empty = static k, unchanged.
+dsd=os.environ.get("DSD_TABLE","").strip()
+if dsd:
+    spec["num_speculative_tokens_per_batch_size"]=[[int(x) for x in e.split(":")] for e in dsd.split(",")]
 print(json.dumps(spec,separators=(",",":")))')")
 elif [ "${SPEC_METHOD:-mtp}" = "none" ]; then
     :
@@ -1047,7 +1129,7 @@ launch_cluster() {
     for v in SERVED_MODEL_NAME PORT TP NNODES HEAD_IP MASTER_PORT QUANTIZATION \
              MAX_MODEL_LEN GPU_MEM_UTIL KV_CACHE_MEMORY MAX_NUM_SEQS MAX_NUM_BATCHED_TOKENS \
              KV_CACHE_DTYPE MTP_TOKENS SPEC_METHOD DFLASH_TOKENS DFLASH_MODEL_DIR \
-             DFLASH_DRAFT_TP \
+             DFLASH_DRAFT_TP DSD_TABLE \
              LANGUAGE_MODEL_ONLY SKIP_MM_PROFILING \
              LIMIT_MM CHAT_TEMPLATE ENFORCE_EAGER EXL3_FUSED_MOE MODEL_DIR EXTRA_ARGS; do
         serve_env+=" -e $v='${!v:-}'"
@@ -1128,6 +1210,7 @@ launch_cluster() {
         -e DFLASH_TOKENS="${DFLASH_TOKENS:-7}" \
         -e DFLASH_MODEL_DIR="${DFLASH_MODEL_DIR:-}" \
         -e DFLASH_DRAFT_TP="${DFLASH_DRAFT_TP:-}" \
+        -e DSD_TABLE="${DSD_TABLE:-}" \
         -e LANGUAGE_MODEL_ONLY="$LANGUAGE_MODEL_ONLY" \
         -e SKIP_MM_PROFILING="$SKIP_MM_PROFILING" \
         -e LIMIT_MM="$LIMIT_MM" \
@@ -1215,6 +1298,9 @@ on_ready() {
     local spec="MTP k=${MTP_TOKENS}"
     [ "$SPEC_METHOD" = "dflash" ] && spec="DFlash2 k=${DFLASH_TOKENS} (${DFLASH_MODEL})"
     [ "$SPEC_METHOD" = "none" ] && spec=off
+    if [ -n "${DSD_TABLE:-}" ]; then
+        spec="${spec} + DSD[${DSD_TABLE}]"
+    fi
     log "  features   : tools=glm47+auto, reasoning=glm45, spec=${spec}, vision=${vision}"
     log "  prefill    : max-num-batched-tokens=${MAX_NUM_BATCHED_TOKENS} (D1 spec-decode step budget — verify the boot log shows this number)"
     log "  thinking   : served default=$( [ "${GLM53_DEFAULT_THINKING:-1}" = "1" ] && echo on || echo off ) (GLM53_DEFAULT_THINKING; clients can override)"
@@ -1225,6 +1311,17 @@ on_ready() {
     log "      -d '{\"model\": \"${SERVED_MODEL_NAME}\", \"messages\": [{\"role\": \"user\", \"content\": \"hello!\"}]}'"
     log "  manage     : ./start.sh status | ./start.sh logs | ./start.sh logs worker | ./start.sh stop"
     log "======================================================================"
+    # D5 boot verification (fail-noisy, non-fatal): the only bad failure mode
+    # is the DSD->PIECEWISE cudagraph downgrade, which means the V2 model
+    # runner assumption broke and the arm must not be benchmarked.
+    if [ -n "${DSD_TABLE:-}" ]; then
+        if docker logs "$CONTAINER_HEAD" 2>&1 | grep -q "Overriding cudagraph_mode from"; then
+            warn "DSD forced PIECEWISE cudagraphs (V2 model runner regression?) — do NOT benchmark this boot"
+        else
+            log "  dsd-check  : no cudagraph_mode downgrade in boot log (V2 path intact)"
+        fi
+        log "  dsd-receipt: run tests/verify_dsd.py (per-position acceptance must freeze at pos K during a c>=2 burst)"
+    fi
     if [ "${TAIL:-0}" = "1" ]; then
         log "tailing head logs — Ctrl-C just detaches, the server keeps running"
         trap '' INT

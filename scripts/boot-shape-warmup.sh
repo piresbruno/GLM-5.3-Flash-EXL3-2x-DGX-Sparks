@@ -18,6 +18,12 @@
 #   GLM53_WARMUP_TRITON_CACHE_DIR  host Triton cache (sampler postcondition)
 #   GLM53_WARMUP_BEARER / VLLM_API_KEY
 #   WARMUP_CURL                    test seam
+#
+# D5 (DSD): the drafter still proposes static k=7 — the walk-kernel constexpr
+# and drafter chain shapes are UNCHANGED by DSD_TABLE. The per-concurrency
+# verify shapes (seq*(1+K), e.g. 12 at c=2 / 24 at c=4 with K=5) are exercised
+# by the c2/c3/c4 bursts below, so no extra ladder is needed here. The DSD
+# receipt itself lives in tests/verify_dsd.py.
 set -u
 
 BASE="${1:-http://127.0.0.1:8081}"

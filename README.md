@@ -374,6 +374,7 @@ that are now documented/enforced:
 | `SPEC_METHOD` | `dflash` | `dflash` / `mtp` / `none`. Rollback: `SPEC_METHOD=mtp ./start.sh restart` |
 | `DFLASH_MODEL` | `incoai/GLM-5.3-Flash-DFlash2` | DFlash2 draft Hub repo (~2.3 GiB BF16) |
 | `DFLASH_TOKENS` | `7` | DFlash2 speculative tokens (trained block 8) |
+| `DSD_TABLE` | *(unset)* | D5: Dynamic Speculative Decoding (vLLM PR #32374, present in this image). `start_bs:end_bs:k,...` draft-length schedule; e.g. `1:1:7,2:999:5` = k7 solo, k5 from 2 concurrent. Empty = static k. Requires AsyncScheduler+V2 (auto on this kit): the scheduler sizes draft placeholders per step and trims the drafter's static-7 output to K — no drafter patch. Verify shapes `seq*(1+K)` are captured by a DSD-derived ladder (`12 18 24` replace `16 32`). Receipt: `python3 tests/verify_dsd.py` |
 | `DFLASH_DRAFT_TP` | `1` | keep the 2.3 GiB drafter on rank 0 (no CX7 per draft step). Empty = inherit TP |
 | DFlash2 draft KV | `auto` (bf16) | target stays `fp8`/`fp8_ds_mla`; dense draft has no MLA FP8 backend on SM121 |
 | DFlash2 attention | *(unset)* | SM121 picks FLASH_ATTN for non-causal SWA. Do not pin `TRITON_ATTN` |
@@ -381,7 +382,7 @@ that are now documented/enforced:
 | `EXL3_FUSED_MOE` | `1` | `exl3_moe` per layer; `0` = LinearEXL3 loop |
 | `KV_CACHE_DTYPE` | `fp8` | packed `fp8_ds_mla`; not `nvfp4`, not bf16 |
 | `GPU_MEM_UTIL` | `0.87` | GB10 UMA budget (DFlash2 + vision; live pool **1,754,237** tokens / **1.75×** at 1M / 690 blocks / 18.67 GiB) |
-| `MAX_MODEL_LEN` | `900000` | D1-adopted default (2026-08-29): 900k = 1.12× on the MNBT-2048 pool (1M was 1.01× — lottery edge). Do not drop to 256k to “free” KV — logged tokens ≈ concurrency × this cap; hybrid block-id overhead then shrinks the pool |
+| `MAX_MODEL_LEN` | `600000` | Operator decision (2026-08-29, DSD campaign): 600k window — same UMA pool gives ~1.6× concurrency margin (was 1.08× at 900k). Do not drop to 256k to “free” KV — logged tokens ≈ concurrency × this cap; hybrid block-id overhead then shrinks the pool |
 | `MAX_NUM_SEQS` | `4` | decode batch; MTP adds k+1 tokens/seq |
 | `MAX_NUM_BATCHED_TOKENS` | `2048` | D1-adopted (2026-08-29, ladder 512→1024→2048): spec-decode step budget, engine honors it (vllm.py:1849 warns <8192 but does not clamp). 100k TTFT −25.7% vs 512, decode unchanged; KV pool cost 1,262k→1,012k tokens. 8192 oversubscribes GB10 indexer topk; 4096 skipped (diminishing). Raising further shrinks the pool — re-run the D1 gate + memfloor |
 | `GLM53_MIXED_PREFILL_CHUNK` | `skip` | do not mix a peer prefill into a decode step (issue #6). `N>0` = cap tokens; `0` = off. Solo prefill stays 1024 |
