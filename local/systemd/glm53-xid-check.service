@@ -7,4 +7,3 @@ Description=GLM-5.3 fleet Xid scan (R1 ops kit)
 Type=oneshot
 ExecStart=@REPO_DIR@/local/xid-check.sh
 # Xid lines live in the kernel ring buffer; user timers need journal access.
-SupplementaryGroups=systemd-journal
