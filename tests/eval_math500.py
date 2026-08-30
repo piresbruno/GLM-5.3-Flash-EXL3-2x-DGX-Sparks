@@ -40,21 +40,33 @@ def _hf_auth_header() -> dict:
 
 def fetch_rows(length: int) -> list[dict]:
     import time
-    url = (
-        f"{API_BASE}?dataset={DATASET}&config=default&split={SPLIT}"
-        f"&offset=0&length={length}"
-    )
-    last: Exception = RuntimeError("unreachable")
-    for attempt in range(4):
-        try:
-            with urllib.request.urlopen(urllib.request.Request(url, headers=_hf_auth_header()), timeout=60) as r:
-                data = json.load(r)
-            return [row["row"] for row in data["rows"]]
-        except urllib.error.HTTPError as e:
-            last = e
-            print(f"  datasets-server HTTP {e.code} (attempt {attempt + 1}/4): {e.read()[:200]}", flush=True)
-            time.sleep(10 * (attempt + 1))
-    raise last
+    rows: list[dict] = []
+    offset = 0
+    # datasets-server caps length at 100 — paginate
+    while len(rows) < length:
+        chunk = min(100, length - len(rows))
+        url = (
+            f"{API_BASE}?dataset={DATASET}&config=default&split={SPLIT}"
+            f"&offset={offset}&length={chunk}"
+        )
+        last: Exception = RuntimeError("unreachable")
+        for attempt in range(4):
+            try:
+                with urllib.request.urlopen(urllib.request.Request(url, headers=_hf_auth_header()), timeout=60) as r:
+                    data = json.load(r)
+                rows.extend(row["row"] for row in data["rows"])
+                last = RuntimeError("unreachable")
+                break
+            except urllib.error.HTTPError as e:
+                last = e
+                print(f"  datasets-server HTTP {e.code} (attempt {attempt + 1}/4): {e.read()[:200]}", flush=True)
+                time.sleep(10 * (attempt + 1))
+        if isinstance(last, Exception) and str(last) != "unreachable":
+            raise last
+        if chunk == 0:
+            break
+        offset += chunk
+    return rows[:length]
 
 
 def extract_answer(text: str) -> str:
