@@ -211,13 +211,15 @@ def test_launch_wiring_env_forwarding() -> None:
     assert 'bundle_env+=(-e "VLLM_PREFIX_CACHE_RETENTION_INTERVAL=$VLLM_PREFIX_CACHE_RETENTION_INTERVAL")' in src
     assert 'bundle_env+=(-e "FLASHINFER_WORKSPACE_BASE=$FLASHINFER_WORKSPACE_BASE")' in src
     assert "${worker_bundle}" in src and '"${bundle_env[@]}"' in src
-    # CLI overrides survive the .env source for every bundle knob
-    for cap, var in (("_cli_lpt", "LONG_PREFILL_TOKEN_THRESHOLD"),
-                     ("_cli_async", "ASYNC_SCHEDULING"),
-                     ("_cli_retention", "VLLM_PREFIX_CACHE_RETENTION_INTERVAL"),
-                     ("_cli_fiws", "FLASHINFER_WORKSPACE_BASE")):
+    # CLI overrides survive the .env source for every bundle knob (set-vs-unset
+    # semantics: an explicitly EMPTY inline value overrides the default)
+    for cap, capset, var in (("_cli_lpt", "_cli_lpt_set", "LONG_PREFILL_TOKEN_THRESHOLD"),
+                             ("_cli_async", "_cli_async_set", "ASYNC_SCHEDULING"),
+                             ("_cli_retention", "_cli_retention_set", "VLLM_PREFIX_CACHE_RETENTION_INTERVAL"),
+                             ("_cli_fiws", "_cli_fiws_set", "FLASHINFER_WORKSPACE_BASE")):
         assert f'{cap}="${{{var}-}}"' in src, f"no CLI capture for {var}"
-        assert f'[ -n "${{{cap}}}" ] && {var}="${cap}"' in src, f"no CLI restore for {var}"
+        assert f'"${{{var}+set}}"' in src, f"no set-vs-unset capture for {var}"
+        assert f'[ "${{{capset}:-}}" = set ] && {var}="${cap}"' in src, f"no CLI restore for {var}"
 
 
 def test_preflight_driver_gate_and_build_guard() -> None:
@@ -325,6 +327,39 @@ def test_flusher_stability_exit_and_cap() -> None:
             assert "stable: health OK x5" in logf.read_text(), "stability exit not logged"
     finally:
         srv.shutdown()
+
+
+def test_bundle_knobs_empty_inline_override_wins() -> None:
+    # Baseline-arm requirement: an explicitly EMPTY inline value must override
+    # the .env/start.sh default (set-vs-unset semantics on the four bundle
+    # knobs) — the boot4 arm contamination showed the old [ -n ] restore
+    # silently dropped empty overrides.
+    with tempfile.TemporaryDirectory() as raw:
+        tmp = Path(raw)
+        script = tmp / "s.sh"
+        script.write_text(_config_slice()
+                          + '\nprintf "GOT %s|%s|%s|%s\\n" '
+                            '"${LONG_PREFILL_TOKEN_THRESHOLD-X}" "${ASYNC_SCHEDULING-X}" '
+                            '"${VLLM_PREFIX_CACHE_RETENTION_INTERVAL-X}" "${FLASHINFER_WORKSPACE_BASE-X}"\n')
+        script.chmod(0o755)
+        env_line = ("LONG_PREFILL_TOKEN_THRESHOLD=9999\nASYNC_SCHEDULING=1\n"
+                    "VLLM_PREFIX_CACHE_RETENTION_INTERVAL=7\nFLASHINFER_WORKSPACE_BASE=/x\n")
+        (tmp / ".env").write_text("GPU_MEM_UTIL=0.85\n" + env_line)
+        e = {k: v for k, v in os.environ.items()
+             if k not in ("LONG_PREFILL_TOKEN_THRESHOLD", "ASYNC_SCHEDULING",
+                          "VLLM_PREFIX_CACHE_RETENTION_INTERVAL", "FLASHINFER_WORKSPACE_BASE")}
+        # inline EMPTY values must win over .env
+        r = subprocess.run(["bash", str(script)], capture_output=True, text=True,
+                           env={**e, "LONG_PREFILL_TOKEN_THRESHOLD": "",
+                                "ASYNC_SCHEDULING": "",
+                                "VLLM_PREFIX_CACHE_RETENTION_INTERVAL": "",
+                                "FLASHINFER_WORKSPACE_BASE": ""})
+        assert r.returncode == 0, r.stderr
+        assert "GOT |||" in r.stdout, f"empty inline overrides lost: {r.stdout}"
+        # no inline values -> .env wins
+        r = subprocess.run(["bash", str(script)], capture_output=True, text=True, env=e)
+        assert r.returncode == 0, r.stderr
+        assert "GOT 9999|1|7|/x" in r.stdout, f".env values lost: {r.stdout}"
 
 
 def main() -> int:

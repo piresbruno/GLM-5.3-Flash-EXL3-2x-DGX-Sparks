@@ -77,11 +77,19 @@ _cli_mixed="${GLM53_MIXED_PREFILL_CHUNK-}"
 _cli_flusher="${CACHE_FLUSHER-}"
 _cli_dsd="${DSD_TABLE-}"
 # R1 bundle knobs survive the .env source too, so inline arm overrides like
-# ASYNC_SCHEDULING=1 DSD_TABLE=... ./start.sh restart actually win.
+# ASYNC_SCHEDULING=1 DSD_TABLE=... ./start.sh restart actually win. These four
+# use set-vs-unset semantics ("${var+set}"): an explicitly EMPTY inline value
+# (e.g. LONG_PREFILL_TOKEN_THRESHOLD= on the Phase-2 baseline arm) OVERRIDES the
+# start.sh bundle default — that is the documented way to disable a bundle knob
+# for an arm.
 _cli_lpt="${LONG_PREFILL_TOKEN_THRESHOLD-}"
+_cli_lpt_set="${LONG_PREFILL_TOKEN_THRESHOLD+set}"
 _cli_async="${ASYNC_SCHEDULING-}"
+_cli_async_set="${ASYNC_SCHEDULING+set}"
 _cli_retention="${VLLM_PREFIX_CACHE_RETENTION_INTERVAL-}"
+_cli_retention_set="${VLLM_PREFIX_CACHE_RETENTION_INTERVAL+set}"
 _cli_fiws="${FLASHINFER_WORKSPACE_BASE-}"
+_cli_fiws_set="${FLASHINFER_WORKSPACE_BASE+set}"
 set -a
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/.env"
@@ -104,10 +112,10 @@ set +a
 [ -n "${_cli_mixed}" ] && GLM53_MIXED_PREFILL_CHUNK="$_cli_mixed"
 [ -n "${_cli_flusher}" ] && CACHE_FLUSHER="$_cli_flusher"
 [ -n "${_cli_dsd}" ] && DSD_TABLE="${_cli_dsd}"
-[ -n "${_cli_lpt}" ] && LONG_PREFILL_TOKEN_THRESHOLD="$_cli_lpt"
-[ -n "${_cli_async}" ] && ASYNC_SCHEDULING="$_cli_async"
-[ -n "${_cli_retention}" ] && VLLM_PREFIX_CACHE_RETENTION_INTERVAL="$_cli_retention"
-[ -n "${_cli_fiws}" ] && FLASHINFER_WORKSPACE_BASE="$_cli_fiws"
+[ "${_cli_lpt_set:-}" = set ] && LONG_PREFILL_TOKEN_THRESHOLD="$_cli_lpt"
+[ "${_cli_async_set:-}" = set ] && ASYNC_SCHEDULING="$_cli_async"
+[ "${_cli_retention_set:-}" = set ] && VLLM_PREFIX_CACHE_RETENTION_INTERVAL="$_cli_retention"
+[ "${_cli_fiws_set:-}" = set ] && FLASHINFER_WORKSPACE_BASE="$_cli_fiws"
 
 # Helpers are defined BEFORE the configuration section: the config-side guards
 # (GPU_MEM_UTIL hard limit, ASYNC_SCHEDULING validation, dsd_validate) refuse
@@ -239,14 +247,18 @@ MAX_NUM_BATCHED_TOKENS="${MAX_NUM_BATCHED_TOKENS:-3584}"
 # path (chunked prefill / overlap-with-decode). Bundle value 1792 = 7 pages,
 # exactly half the 3584 step budget. Scheduler flag, emitted directly by the
 # inner scripts (kept OUT of EXTRA_ARGS so an arm cannot double-add it).
-LONG_PREFILL_TOKEN_THRESHOLD="${LONG_PREFILL_TOKEN_THRESHOLD:-1792}"
+# Bundle-knob defaults use ${var-default} (NOT :-): an explicitly EMPTY value
+# (arm override, set-vs-unset semantics above) must stay empty and disable the
+# knob, not be re-defaulted. MAX_NUM_BATCHED_TOKENS keeps :- (no empty
+# override semantics; an empty MNBT would break the flag emission).
+LONG_PREFILL_TOKEN_THRESHOLD="${LONG_PREFILL_TOKEN_THRESHOLD-1792}"
 # 0 = --no-async-scheduling (bundle baseline; async off). 1 = --async-scheduling
 # (required by the DSD arm — dsd_validate enforces it). auto = pass neither
 # flag, vLLM decides (the Phase-2 baseline-arm setting, resolves the
 # "async is not free" A/B: async off measured at/above async on at c=1).
-ASYNC_SCHEDULING="${ASYNC_SCHEDULING:-0}"
+ASYNC_SCHEDULING="${ASYNC_SCHEDULING-0}"
 case "$ASYNC_SCHEDULING" in
-    0|1|auto) ;;
+    0|1|auto|"") ;;   # empty = no flag emitted = vLLM auto (same as auto)
     *) die "ASYNC_SCHEDULING=$ASYNC_SCHEDULING must be 0, 1 or auto (0=off bundle, 1=on DSD, auto=vLLM decides)" ;;
 esac
 # Sparse KDA retention for prefix caching (fork env, vLLM reads it in-process):
@@ -255,12 +267,12 @@ esac
 #   every N-th boundary. This fork extends it to the SWA/MambaSpec (KDA) groups.
 # Forwarded to BOTH ranks conditionally on non-empty — the fork's env parser
 # runs int() on the value, so an EMPTY STRING crashes boot (must mean "unset").
-VLLM_PREFIX_CACHE_RETENTION_INTERVAL="${VLLM_PREFIX_CACHE_RETENTION_INTERVAL:-0}"
+VLLM_PREFIX_CACHE_RETENTION_INTERVAL="${VLLM_PREFIX_CACHE_RETENTION_INTERVAL-0}"
 # FlashInfer JIT workspace root, INSIDE the already-mounted vLLM cache dir
 # (-v $CACHE_ROOT:/root/.cache/vllm on the head, $WORKER_VLLM_CACHE on the
 # worker), so JIT kernels survive container recreate and watchdog heals pay no
 # re-JIT. Path is in-container and identical on both ranks.
-FLASHINFER_WORKSPACE_BASE="${FLASHINFER_WORKSPACE_BASE:-/root/.cache/vllm/flashinfer}"
+FLASHINFER_WORKSPACE_BASE="${FLASHINFER_WORKSPACE_BASE-/root/.cache/vllm/flashinfer}"
 
 # ---- D5: dynamic speculative decoding (DSD) --------------------------------
 # vLLM Dynamic SD (PR #32374, present in this image): per-batch-size draft
