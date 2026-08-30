@@ -243,6 +243,65 @@ Decision rules:
 
 ---
 
+## Phase 3.5 — Issue #43 arm: mixed prefill/decode chunking (post-R1)
+
+Issue #43 reports interactive multi-client queueing on the 1M default config
+and proposes a 200k default or a README note. Validation on this kit (issue
+thread + our own artifacts):
+
+- `MAX_MODEL_LEN` is a ceiling, not a reservation; the cap binds only when
+  single requests grow past it. The shipped 600k default already covers
+  ≤200k interactive fleets (e.g. 4 × 90k never touches the cap); a default
+  flip mid-campaign would change arm geometry — deferred, documented as
+  profile guidance in the README instead.
+- `num_requests_waiting_by_reason{reason="capacity"}` is a catch-all for all
+  waiting requests (fork `loggers.py:1117`) — the issue's “capacity
+  queueing” was partly cold-prefill serialization. Decode HOL behind a long
+  prefill is already fixed by the R1 bundle (HOL first token 8.39 s vs
+  461.3 s); what remains is cold-prefill ↔ cold-prefill serialization under
+  `GLM53_MIXED_PREFILL_CHUNK=skip`.
+- Decode hygiene (bounded omitted `max_tokens`) ships upstream
+  (`DEFAULT_MAX_NEW_TOKENS`, PRs 24f4478/f2f33c7) — adopt there, do not
+  duplicate on this branch.
+
+**Arm:** `GLM53_MIXED_PREFILL_CHUNK=1024` (mix up to one solo-chunk worth of
+prefill tokens into decode steps) vs bundle baseline `skip`. Everything else
+= R1 bundle geometry (MNBT 3584, LPT 1792, async 0, retention 0, 600k
+window, auto pool). Env-only — no code change; the inline-override wiring is
+covered by `tests/test_start_arm_overrides.py`.
+
+**Protocol:** baseline re-serve + arm re-serve, A/B/B/A interleave preferred
+(rule 3); `./start.sh stop` both ranks between serves; ≥2 warmup gens per
+serve; temp 0 AND production temp phases (rule 9). Results dir
+`results/ab/mixed-chunk-1024-<YYYYMMDD-HHMM>/` with `arm.json` + `summary.md`.
+Per arm:
+
+```bash
+GLM53_MIXED_PREFILL_CHUNK=1024 ./start.sh restart   # arm; baseline = skip
+python3 tests/bench_decode.py --phase structured --structured --runs 5 --max-tokens 400 --skip-coherence --out results/ab/mixed-chunk-1024-<stamp>/structured.json
+python3 tests/bench_decode.py --phase prose       --runs 5 --max-tokens 400 --skip-coherence --out results/ab/mixed-chunk-1024-<stamp>/prose.json
+python3 tests/bench_concurrency.py --long-prompt-tokens 90000 --levels 4 --rounds 3 --out results/ab/mixed-chunk-1024-<stamp>/conc-cold90k.json
+python3 tests/bench_concurrency.py --long-prompt-tokens 36000 --levels 3 --rounds 3 --out results/ab/mixed-chunk-1024-<stamp>/conc-cold36k.json
+python3 tests/bench_prefix_cache.py --label mixed-chunk-1024 --out results/ab/mixed-chunk-1024-<stamp>
+python3 tools/hol_probe.py --out results/ab/mixed-chunk-1024-<stamp>/hol.json
+```
+
+Record per arm: TTFT by admission position (concurrency probes), TPOT p95 of
+co-running decodes during the mixed window, prefill tok/s,
+`vllm:kv_cache_usage_perc`, preemptions (gate **0**), acceptance ±2 pt, and
+the full §0.7 fingerprint (git HEAD + image digest on head AND worker) in
+`arm.json`.
+
+**Gate (issue #43 decision rule):** ADOPT only if cold-prefill TTFT by
+admission position improves ≥10% (the C6 bar) with structured/prose decode
+within ±3%, acceptance ±2 pt, and zero preemptions; else REJECTED (dormant),
+recorded in `results/ab/DECISION-R1.md`. On adoption, flip the
+`.env.example`/`.env` default in a separate commit + README knob-row update.
+The README “Cold-prefill serialization” levers note ships with the docs
+commit regardless of the verdict.
+
+---
+
 ## Phase 4 — Final combined state + regression
 
 1. Assemble the winning set into one commit (`BUILD=1` if C1 included).
