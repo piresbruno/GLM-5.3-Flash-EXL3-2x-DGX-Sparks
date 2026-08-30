@@ -39,13 +39,22 @@ def _hf_auth_header() -> dict:
 
 
 def fetch_rows(length: int) -> list[dict]:
+    import time
     url = (
         f"{API_BASE}?dataset={DATASET}&config=default&split={SPLIT}"
         f"&offset=0&length={length}"
     )
-    with urllib.request.urlopen(urllib.request.Request(url, headers=_hf_auth_header()), timeout=60) as r:
-        data = json.load(r)
-    return [row["row"] for row in data["rows"]]
+    last: Exception = RuntimeError("unreachable")
+    for attempt in range(4):
+        try:
+            with urllib.request.urlopen(urllib.request.Request(url, headers=_hf_auth_header()), timeout=60) as r:
+                data = json.load(r)
+            return [row["row"] for row in data["rows"]]
+        except urllib.error.HTTPError as e:
+            last = e
+            print(f"  datasets-server HTTP {e.code} (attempt {attempt + 1}/4): {e.read()[:200]}", flush=True)
+            time.sleep(10 * (attempt + 1))
+    raise last
 
 
 def extract_answer(text: str) -> str:
