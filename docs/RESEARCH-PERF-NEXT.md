@@ -207,3 +207,41 @@ D3 task evals (already implemented, deferred by operator) remain the recommended
 pre-campaign quality baseline: run `tests/eval_math500.py` / `eval_gpqa.py` once
 on the current final state so the DSD overlay patch has a quality floor to
 diff against.
+
+---
+
+## Addendum (2026-08-30): community prefill report — investigated, isolated, closed
+
+A community report (2× Spark, GLM-5.3-Flash EXL3) claimed: (1) the long-prefill
+fairness threshold silently caps chunks making MNBT dead weight, (2) MNBT 7168 +
+LPT 3584 + "MoE tile 256" bought +11% cold prefill, (3) GLM ~900 tok/s vs
+DeepSeek ~1900 leaves a 2× prefill win available.
+
+Findings on this kit (full record: `results/ab/mnbt7168-lpt3584-20260830-2234/`):
+
+1. **Mechanism verified** — `scheduler.py:554` caps chunks at LPT before the
+   MNBT min; MNBT=3584 was dead weight while LPT=1792 (explains R1's 0.9 s
+   MNBT delta).
+2. **Scheduler arm REJECTED** — isolated MNBT 7168/LPT 3584: 100k TTFT −3.2%
+   (gate ≥10%) and the KV pool regressed 1.63×→1.34×. Prefill here is
+   **kernel-bound**, not step-overhead-bound.
+3. **MoE tile: already active** — `exl3_moe.cu` selects the n256 variant
+   automatically when hidden%256==0 && intermediate%256==0; GLM-5.3-Flash is
+   4096/2048 → **n256 is already dispatched**. The report's tile bump was a
+   no-op fix for their own stale selection (or an older exllamav3); nothing to
+   import.
+4. **The GLM↔DeepSeek gap is architectural** — the sibling DeepSeek recipe on
+   this same cluster runs LPT=1024 (smaller chunks) at ~1638 tok/s cold
+   prefill (128K→80 s). The gap is the EXL3 4 bpw dequant-MoE + fp8_ds_mla +
+   hybrid mamba/DFlash2 path vs NVFP4-KV + DSpark. Config cannot close it.
+
+**Remaining prefill levers, in order of cost:**
+- `EXLLAMAV3_TUNE_CACHE` — the coop-autotune cache is env-addressable; a
+  seeded cache could benchmark alternative tile/warp configurations without
+  patching. Bounded experiment, needs a cache-format read first.
+- Layerwise NVTX trace (`enable_layerwise_nvtx_tracing` in-image) + nsys to
+  decompose a prefill step (MoE vs attention vs mamba vs NCCL) before touching
+  kernels. Recommended before any overlay work.
+- Open question for the community report author: their absolute baseline is
+  831 tok/s vs our 483 on the same model class — DFlash2 on/off, bpw, and
+  util would explain most of it and may reveal a config import.
