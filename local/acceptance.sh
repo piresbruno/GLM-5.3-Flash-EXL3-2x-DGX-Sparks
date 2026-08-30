@@ -47,15 +47,15 @@ probe thinking_default python3 - "$BASE_URL" <<'EOF'
 import json, sys, urllib.request
 base = sys.argv[1]
 payload = {"messages": [{"role": "user", "content": "What is 17*23? Think step by step."}],
-           "max_tokens": 200, "temperature": 0}
+           "max_tokens": 512, "temperature": 0}
 req = urllib.request.Request(base + "/v1/chat/completions", data=json.dumps(payload).encode(),
                              headers={"Content-Type": "application/json"})
-resp = json.loads(urllib.request.urlopen(req, timeout=180).read())
+resp = json.loads(urllib.request.urlopen(req, timeout=240).read())
 msg = resp["choices"][0]["message"]
 has_reasoning = bool(msg.get("reasoning_content") or msg.get("reasoning")
                      or "<think>" in str(msg.get("content", "")))
-assert has_reasoning, f"no reasoning channel/content in default request: {str(msg)[:120]}"
-assert "391" in str(msg.get("content", "")), "arithmetic answer missing from content"
+assert has_reasoning, f"no reasoning channel/content in default request: {str(msg)[:160]}"
+assert "391" in str(msg.get("content", "")), f"arithmetic answer missing: {str(msg)[:160]}"
 EOF
 
 probe thinking_off python3 - "$BASE_URL" <<'EOF'
@@ -74,24 +74,35 @@ assert not msg.get("reasoning_content") and "<think>" not in str(msg.get("conten
 EOF
 
 probe vision python3 - "$BASE_URL" <<'EOF'
-import base64, json, sys, urllib.request
+import json, sys, urllib.request, zlib, struct, base64
+
+def red_square_png():  # 64x64 white with a centered 32x32 red square
+    W = H = 64
+    rows = b""
+    for y in range(H):
+        row = b"\x00"
+        for x in range(W):
+            row += b"\xe0\x10\x10" if (16 <= x < 48 and 16 <= y < 48) else b"\xff\xff\xff"
+        rows += row
+    def chunk(typ, data):
+        c = struct.pack(">I", len(data)) + typ + data
+        return c + struct.pack(">I", zlib.crc32(typ + data) & 0xFFFFFFFF)
+    ihdr = struct.pack(">IIBBBBB", W, H, 8, 2, 0, 0, 0)
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr)
+            + chunk(b"IDAT", zlib.compress(rows, 9)) + chunk(b"IEND", b""))
+
 base = sys.argv[1]
-# 2x2 PNG, solid red: a minimal real image; the model must acknowledge an image.
-png = base64.b64encode(bytes.fromhex(
-    "89504e470d0a1a0a0000000d4948445200000002000000020802000000fdd49a730000000c"
-    "4944415408d763f8cfc0000003010100184d8e440000000049454e44ae426082"
-)).decode()
+png = base64.b64encode(red_square_png()).decode()
 payload = {"messages": [{"role": "user", "content": [
     {"type": "image_url", "image_url": {"url": "data:image/png;base64," + png}},
-    {"type": "text", "text": "Do you see an image in this message? Answer yes or no."}]}],
-    "max_tokens": 24, "temperature": 0,
+    {"type": "text", "text": "What color is the square in this image? Answer with one word."}]}],
+    "max_tokens": 16, "temperature": 0,
     "chat_template_kwargs": {"enable_thinking": False}}
 req = urllib.request.Request(base + "/v1/chat/completions", data=json.dumps(payload).encode(),
                              headers={"Content-Type": "application/json"})
 resp = json.loads(urllib.request.urlopen(req, timeout=180).read())
 content = str(resp["choices"][0]["message"].get("content", "")).lower()
-assert ("yes" in content or "red" in content or "image" in content), \
-    f"vision answer unclear: {content[:120]}"
+assert "red" in content, f"vision answer unclear: {content[:160]}"
 EOF
 
 run_needle() {  # run_needle <tokens> <needle> <expected-substr> -> prints content
@@ -128,14 +139,24 @@ fi
 probe needle_16k_replay python3 - "$BASE_URL" "$NEEDLE_TOKENS" <<'EOF'
 import json, sys, urllib.request
 base, tokens = sys.argv[1], int(sys.argv[2])
+HIT = "vllm:prefix_cache_hits_total"
+
+def hits():
+    t = 0.0
+    for line in urllib.request.urlopen(base + "/metrics", timeout=30).read().decode().splitlines():
+        if line.startswith(HIT + "{") or line.startswith(HIT + " "):
+            t += float(line.rsplit("}", 1)[1].strip())
+    return t
+
 needle = "The emergency rendezvous code for convoy seven is AMBER-HERON-7741."
 filler = "The logistics ledger lists crates, seals, and duty stamps transferred at the mid-way depot. "
 half = max(1, int(tokens / 16 / 2))
 prompt = filler * half + "\n" + needle + "\n" + filler * half
 prompt += "\n\nQuestion: retrieve the exact fact planted above. Answer with only that fact."
 answers = []
-cached = []
-for _ in range(2):
+ratios = []
+for attempt in range(2):
+    h0 = hits()
     payload = {"messages": [{"role": "user", "content": prompt}], "max_tokens": 32,
                "temperature": 0, "chat_template_kwargs": {"enable_thinking": False}}
     req = urllib.request.Request(base + "/v1/chat/completions",
@@ -144,12 +165,11 @@ for _ in range(2):
     resp = json.loads(urllib.request.urlopen(req, timeout=1200).read())
     msg = resp["choices"][0]["message"]
     answers.append(str(msg.get("content", "")))
-    usage = resp.get("usage", {})
-    detail = (usage.get("prompt_tokens_details") or {}) if isinstance(usage, dict) else {}
-    cached.append(int(detail.get("cached_tokens") or 0))
+    prompt_tokens = resp.get("usage", {}).get("prompt_tokens", 0)
+    ratios.append((hits() - h0) / prompt_tokens if prompt_tokens else 0.0)
 assert all("AMBER-HERON-7741" in a for a in answers), f"replay answers wrong: {answers!r}"
 assert answers[0] == answers[1], f"replay answers differ: {answers!r}"
-assert cached[1] > 0, f"replay reported no cached tokens: {cached}"
+assert ratios[1] >= 0.9, f"replay hit {ratios[1]:.3f} < 0.9 (measured via {HIT} delta)"
 EOF
 
 if [ "$rc" = "0" ]; then

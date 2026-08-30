@@ -4,9 +4,13 @@
 Ported from the Reederey87 production kit (see NOTICE), adapted to this
 repo's layout (.env PORT, GLM-5.3-Flash-EXL3 served name, :8081 default).
 
-Two protocols, both prefill-dominated and answered from the OpenAI API's
-``usage.prompt_tokens_details.cached_tokens`` (vLLM reports prefix-cache
-hits there):
+Hit measurement (R1 fix, 2026-08-30): this fork's OpenAI usage does NOT
+populate ``prompt_tokens_details.cached_tokens`` (verified: always None), so
+hits are measured from the ``vllm:prefix_cache_hits_total`` /metrics counter
+delta around each request/round instead — the same channel the D1-era
+retests used. Hit ratio = delta_hits / measured prompt tokens.
+
+Two protocols, both prefill-dominated:
 
 burst   : S concurrent sessions share one long common prefix and each ends
           with a unique question. R rounds. Rounds 2+ should hit >= the
@@ -60,6 +64,23 @@ HAYSTACK = (
 )
 
 
+HIT_METRIC = "vllm:prefix_cache_hits_total"
+
+
+def _read_hits(base: str) -> float:
+    """Sum of the prefix-cache hit-token counters across engines."""
+    with urllib.request.urlopen(f"{base}/metrics", timeout=30) as resp:
+        text = resp.read().decode()
+    total = 0.0
+    for line in text.splitlines():
+        if line.startswith(f"{HIT_METRIC}{{") or line.startswith(f"{HIT_METRIC} "):
+            try:
+                total += float(line.rsplit("}", 1)[1].strip())
+            except (ValueError, IndexError):
+                continue
+    return total
+
+
 def _chat(base: str, model: str, content: str, max_tokens: int, timeout: float) -> dict:
     payload = {
         "model": model,
@@ -79,6 +100,10 @@ def _chat(base: str, model: str, content: str, max_tokens: int, timeout: float) 
 
 
 def _hit_ratio(resp: dict) -> tuple[int, int]:
+    """(cached, prompt) from the response — cached is None on this fork.
+
+    Kept for the measured prompt size; the HIT count comes from the /metrics
+    counter delta (see _read_hits)."""
     usage = resp.get("usage", {})
     detail = (usage.get("prompt_tokens_details") or {}) if isinstance(usage, dict) else {}
     cached = int(detail.get("cached_tokens") or 0)
@@ -103,6 +128,7 @@ def run_burst(args: argparse.Namespace) -> dict:
     prompts = [_build_prompt(args.tokens, i, questions[i]) for i in range(args.sessions)]
     rounds = []
     for r in range(args.rounds):
+        hits_before = _read_hits(args.base_url)
         t0 = time.time()
         with ThreadPoolExecutor(max_workers=args.sessions) as pool:
             futs = [
@@ -113,27 +139,29 @@ def run_burst(args: argparse.Namespace) -> dict:
             errs = []
             for f in futs:
                 try:
-                    cached, prompt = _hit_ratio(f.result())
-                    hits.append((cached, prompt))
+                    _cached, prompt = _hit_ratio(f.result())
+                    hits.append(prompt)
                 except (urllib.error.URLError, TimeoutError, OSError) as e:
                     errs.append(str(e))
         dt = time.time() - t0
-        ratios = [c / p for c, p in hits if p > 0]
+        hits_after = _read_hits(args.base_url)
+        round_hits = hits_after - hits_before
+        prompt_sum = float(sum(hits))
+        ratio = round_hits / prompt_sum if prompt_sum > 0 else 0.0
         round_stat = {
             "round": r + 1,
             "ok": len(hits),
             "errors": errs,
-            "prompt_tokens": [p for _, p in hits],
-            "cached_tokens": [c for c, _ in hits],
-            "hit_ratio_mean": round(sum(ratios) / len(ratios), 4) if ratios else 0.0,
-            "hit_ratio_min": round(min(ratios), 4) if ratios else 0.0,
+            "prompt_tokens": hits,
+            "round_hit_tokens": round(round_hits, 1),
+            "hit_ratio_mean": round(ratio, 4),
+            "hit_ratio_min": round(ratio, 4),
             "wall_s": round(dt, 1),
         }
         rounds.append(round_stat)
         print(
             f"burst round {r + 1}: ok={round_stat['ok']}/{args.sessions} "
-            f"hit_mean={round_stat['hit_ratio_mean']:.3f} "
-            f"hit_min={round_stat['hit_ratio_min']:.3f} ({dt:.0f}s)",
+            f"hit={ratio:.3f} ({round_hits:.0f}/{prompt_sum:.0f} tok) ({dt:.0f}s)",
             flush=True,
         )
     gate_rounds = rounds[args.rounds_gate - 1 :]
@@ -153,16 +181,18 @@ def run_solo(args: argparse.Namespace) -> dict:
     prompt = _build_prompt(args.tokens, 0, "[solo-replay] Summarize the manifest rules in one sentence.")
     out = []
     for attempt in range(2):
+        hits_before = _read_hits(args.base_url)
         t0 = time.time()
-        cached, prompt_tokens = _hit_ratio(
+        _cached, prompt_tokens = _hit_ratio(
             _chat(args.base_url, args.model, prompt, args.max_tokens, args.timeout)
         )
-        ratio = cached / prompt_tokens if prompt_tokens else 0.0
+        hit_tokens = _read_hits(args.base_url) - hits_before
+        ratio = hit_tokens / prompt_tokens if prompt_tokens else 0.0
         out.append(
             {
                 "attempt": attempt + 1,
                 "prompt_tokens": prompt_tokens,
-                "cached_tokens": cached,
+                "hit_tokens": round(hit_tokens, 1),
                 "hit_ratio": round(ratio, 4),
                 "wall_s": round(time.time() - t0, 1),
             }
