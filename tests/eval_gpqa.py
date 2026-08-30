@@ -56,11 +56,35 @@ def fetch_rows(length: int) -> list[dict]:
                 print(f"  datasets-server HTTP {e.code} (attempt {attempt + 1}/4): {e.read()[:200]}", flush=True)
                 time.sleep(10 * (attempt + 1))
         if isinstance(last, Exception) and str(last) != "unreachable":
+            # datasets-server rate-limits (429) independently of the hub CDN —
+            # fall back to the gated CSV via the resolve endpoint (same rows).
+            if offset == 0:
+                try:
+                    return _gpqa_csv_fallback()
+                except Exception as fe:  # noqa: BLE001
+                    print(f"  csv fallback failed: {fe}", flush=True)
             raise last
         if chunk == 0:
             break
         offset += chunk
     return rows[:length]
+
+
+def _gpqa_csv_fallback() -> list[dict]:
+    import io
+    import os
+    import pandas as pd
+    token = os.environ.get("HF_TOKEN")
+    if not token:
+        p = os.path.expanduser("~/.cache/huggingface/token")
+        if os.path.exists(p):
+            token = open(p).read().strip()
+    url = "https://huggingface.co/datasets/Idavidrein/gpqa/resolve/main/gpqa_diamond.csv"
+    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
+    with urllib.request.urlopen(req, timeout=120) as r:
+        df = pd.read_csv(io.BytesIO(r.read()))
+    print(f"  csv fallback: {len(df)} rows from hub resolve endpoint", flush=True)
+    return df.to_dict("records")
 
 
 def build_mcq(row: dict, rng: random.Random) -> tuple[str, str]:
