@@ -1,0 +1,145 @@
+{
+  "phase": "structured",
+  "health_code": 200,
+  "health_body": "",
+  "runs": [
+    {
+      "http": 200,
+      "ttft_s": 0.34428330399987317,
+      "wall_s": 3.2036232939999536,
+      "decode_s": 2.8593399900000804,
+      "tok_s": 69.59648055004274,
+      "completion_tokens": 200,
+      "prompt_tokens": 27,
+      "finish_reason": "length",
+      "nan": false,
+      "text_head": "1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55 56 57 58 59 60 61 62 63 64 65 66 67 68 69 70 71 72 73 74 75 76 77 78 79 80 81 82 83 84 85 86 87 88 89 90 91 92 93 94 95 96 97 98 99 100 ",
+      "text_len": 292,
+      "usage": {
+        "prompt_tokens": 27,
+        "total_tokens": 227,
+        "completion_tokens": 200
+      },
+      "spec": {
+        "drafts": 25,
+        "draft_tokens": 175,
+        "accepted": 175,
+        "accept_ratio": 1.0,
+        "accepted_per_step": 7.0,
+        "pos": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "http": 200,
+      "ttft_s": 0.34381674399992335,
+      "wall_s": 3.095939334999912,
+      "decode_s": 2.7521225909999885,
+      "tok_s": 72.30782547651448,
+      "completion_tokens": 200,
+      "prompt_tokens": 27,
+      "finish_reason": "length",
+      "nan": false,
+      "text_head": "1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55 56 57 58 59 60 61 62 63 64 65 66 67 68 69 70 71 72 73 74 75 76 77 78 79 80 81 82 83 84 85 86 87 88 89 90 91 92 93 94 95 96 97 98 99 100 ",
+      "text_len": 292,
+      "usage": {
+        "prompt_tokens": 27,
+        "total_tokens": 227,
+        "completion_tokens": 200
+      },
+      "spec": {
+        "drafts": 25,
+        "draft_tokens": 175,
+        "accepted": 175,
+        "accept_ratio": 1.0,
+        "accepted_per_step": 7.0,
+        "pos": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "http": 200,
+      "ttft_s": 0.35763277599971843,
+      "wall_s": 3.1225692839998374,
+      "decode_s": 2.764936508000119,
+      "tok_s": 71.97271959924204,
+      "completion_tokens": 200,
+      "prompt_tokens": 27,
+      "finish_reason": "length",
+      "nan": false,
+      "text_head": "1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55 56 57 58 59 60 61 62 63 64 65 66 67 68 69 70 71 72 73 74 75 76 77 78 79 80 81 82 83 84 85 86 87 88 89 90 91 92 93 94 95 96 97 98 99 100 ",
+      "text_len": 292,
+      "usage": {
+        "prompt_tokens": 27,
+        "total_tokens": 227,
+        "completion_tokens": 200
+      },
+      "spec": {
+        "drafts": 25,
+        "draft_tokens": 175,
+        "accepted": 175,
+        "accept_ratio": 1.0,
+        "accepted_per_step": 7.0,
+        "pos": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    }
+  ],
+  "ts": 1788068489.5747344,
+  "prompt": "structured-count-1-200",
+  "thinking": false,
+  "temperature": 0,
+  "warmup": {
+    "tok_s": 92.72395457465615,
+    "ttft_s": 0.347381655999925,
+    "completion_tokens": 32
+  },
+  "tok_s_median": 71.97271959924204,
+  "tok_s_min": 69.59648055004274,
+  "tok_s_max": 72.30782547651448,
+  "ttft_median_s": 0.34428330399987317,
+  "completion_tokens_median": 200.0,
+  "accept_ratio_median": 1.0,
+  "accepted_per_step_median": 7.0,
+  "any_nan": false,
+  "health_code_after": 200,
+  "short_after": {
+    "http": 200,
+    "ttft_s": 0.3513145359997907,
+    "wall_s": 0.46637900199993965,
+    "decode_s": 0.11506446600014897,
+    "tok_s": 60.835462444078416,
+    "completion_tokens": 8,
+    "prompt_tokens": 33,
+    "finish_reason": "length",
+    "nan": false,
+    "text_head": "# How a Hash Map Works: A",
+    "text_len": 25,
+    "usage": {
+      "prompt_tokens": 33,
+      "total_tokens": 41,
+      "completion_tokens": 8
+    }
+  }
+}

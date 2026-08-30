@@ -9,11 +9,11 @@ the implementation + offline verification is complete (see "Status").
 
 | Phase | State |
 |---|---|
-| 0 — ops pre-flight | Driver 580.173.02 verified on BOTH nodes 2026-08-29 (580.x branch — no downgrade needed). CX7 ports ACTIVE/LinkUp 200Gb on the pinned rail + the second rail (`rocep1s0f1`/`P2p1s0f0` class) is also up; all port error counters 0. Digest `9bb1557a…` present on both nodes and pinned in `.env`. 30-min soak still REQUIRED before Phase 2. |
-| 1 — bundle implementation | DONE. C1 serving config (MNBT 3584, LPT 1792, retention 0, async off, FlashInfer workspace, digest pin, KV-pin wiring `--kv-cache-memory-bytes`), C2 ops kit (`local/` + watchdog upgrade + `NOTICE`), C3 `tests/test_r1_bundle.py` 11/11 + `tests/test_dsd_wiring.py` 7/7 + override tests all passing offline. |
-| 2 — bundle A/B | PENDING (needs the fleet; GPUs were occupied by another recipe at implementation time). |
-| 3 — DSD arm | PENDING (Phase-2 baseline required first). |
-| 4 — ops activation + close | PENDING (operator-approved timers). |
+| 0 — ops pre-flight | DONE. Driver 580.173.02 both nodes; CX7 soak clean (109.25 Gb/s, 25 min, zero errors — `results/ab/r1-phase0/soak.md`); digest pinned. Freeze forensics: `results/ab/r1-phase0/freeze-20260830.md`. |
+| 1 — bundle implementation | DONE (C1/C2/C3 committed; tests 14/14 offline). |
+| 2 — bundle A/B | **DONE — ADOPTED** (`results/ab/DECISION-R1.md`, arms `baseline-r1ref-20260830-0715` + `r1-auto-20260830-0633`). |
+| 3 — DSD arm | **DONE — REJECTED, dormant** (arm `dsd-r1-20260830-0725`: ×1 −7.0% unconditional reject; aggregates +71%/+35% ride on async ON). |
+| 4 — ops activation + close | Timers installed, NOT enabled (operator-approved step: `local/install-ops-units.sh --enable`). Tags `baseline-r1-20260830`, `recipe-r1-20260830`. |
 
 ## Phase 0 — finish the ops pre-flight (blocking)
 

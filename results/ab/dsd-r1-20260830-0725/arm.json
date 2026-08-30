@@ -1,0 +1,37 @@
+{
+ "arm": "dsd-r1-20260830-0725",
+ "date": "2026-08-30T07:25Z",
+ "git_sha": "see fingerprint.json (branch checkpoint-d1-baseline)",
+ "config": {
+  "base": "R1 bundle (r1-auto-20260830-0633)",
+  "DSD_TABLE": "1:1:7,2:999:5",
+  "ASYNC_SCHEDULING": "1 (--async-scheduling; DSD requires it)",
+  "KV_pin": null
+ },
+ "boot": {
+  "log": "logs/r1-boot5-dsd.log",
+  "kv_pool_tokens": 824571,
+  "max_concurrency_600k": "1.37x",
+  "dsd_capture_ladder": "1 2 4 8 12 18 24 (DSD-derived; static would be 1 2 4 8 16 24 32)",
+  "cudagraph_downgrades": 0
+ },
+ "receipt": {
+  "verify_dsd": "ACTIVE — per-position deltas {0:30,1:30,2:30,3:30,4:29,5:6,6:6} over 4 waves at c=2; positions >=5 grew only 6 each = the c=1 ramp (solo row K=7) within the proportional tolerance; positions 0-4 uniform = every c>=2 verify step ran K=5"
+ },
+ "metrics": {
+  "structured_decode_tok_s": 66.91,
+  "structured_accept_ratio": 1.0,
+  "prose_decode_tok_s": 28.87,
+  "conc_c2_agg_tok_s": 46.9,
+  "conc_c2_ttft_ms": 434,
+  "conc_c4_agg_tok_s": 42.7,
+  "stability": "0 preemptions, no NaN"
+ },
+ "gates_vs_r1": {
+  "structured_x1": "FAIL — 66.91 vs 71.97 (-7.0% > -3% rejection threshold; async-ON cost, matches the Reederey87 async A/B 69.8 vs 67.4 pattern)",
+  "prose_x1": "PASS — 28.87 vs 27.64 (+4.4%)",
+  "aggregate_x2": "PASS — 46.9 vs 27.4 (+71%)",
+  "aggregate_x4": "PASS — 42.7 vs 31.6 (+35%)",
+  "VERDICT": "REJECTED per plan: x1 structured regression >3% is unconditional. Ships DORMANT (DSD_TABLE default empty). The aggregate wins ride on async scheduling — a follow-up arm should isolate ASYNC_SCHEDULING=1 WITHOUT DSD at x1 before revisiting."
+ }
+}

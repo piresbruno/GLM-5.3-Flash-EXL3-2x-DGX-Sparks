@@ -1,0 +1,11 @@
+{
+  "background_tokens": 240000,
+  "hol_tokens": 1200,
+  "background_ok": true,
+  "hol_first_token_s": 461.31,
+  "gate_s": 30.0,
+  "gate_pass": false,
+  "background_still_running_at_print": false,
+  "background_wall_s": 463.4,
+  "hol_error": null
+}

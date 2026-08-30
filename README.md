@@ -268,6 +268,17 @@ ported components are credited in `NOTICE`.
 | `IMAGE` | `…@sha256:9bb1557a…` | digest pin + `SKIP_PULL=1`: a restart can never silently upgrade. `BUILD=1` with a digest ref is refused |
 | `KV_CACHE_MEMORY` | *(unset — pin REJECTED)* | three pinned boots froze this kit with the NVRM `NV_ERR_NO_MEMORY` kernel signature (17.7 GiB ×2 C4, 14.64 GiB R1 — `results/ab/r1-phase0/freeze-20260830.md`). Auto pool = 963,265 tokens = **1.61×** the 600k window. A pin requires `ALLOW_KV_PIN=1` + a measured memfloor artifact (D2) |
 
+**R1 measured (2026-08-30, fresh re-bench vs the pre-R1 config, `results/ab/DECISION-R1.md`):**
+structured ×1 **71.97** tok/s (accept **1.0** — the xgrammar backports resolved the
+stale 0.9588), prose ×1 **27.64**, 100k cold TTFT **199.4 s**, cache burst rounds 2–3
+**98.6%** / solo replay **98.7%** at ~200k, HOL first-token behind a 240k cold prefill
+**8.39 s vs 461.3 s** on the pre-R1 config (the long-prefill threshold eliminates
+head-of-line blocking — the bundle's decisive win). DSD concurrency arm: receipt
+ACTIVE, aggregates ×2/×4 +71%/+35%, but ×1 structured −7.0% (async-ON cost) →
+**REJECTED, ships dormant** per the unconditional ×1 gate. KV pin: **REJECTED** after
+the third freeze (NVRM `NV_ERR_NO_MEMORY` at API bring-up; auto pool 963–980k tokens
+= 1.61–1.63× adopted; `ALLOW_KV_PIN` hard guard).
+
 **DSD concurrency arm (D5, on top of R1):** `DSD_TABLE=1:1:7,2:999:5
 ASYNC_SCHEDULING=1 ./start.sh restart` — async ON, **pin OFF** (auto pool;
 recorded deviation: under a KV pin, async double-counts the SW-family

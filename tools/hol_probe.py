@@ -76,6 +76,9 @@ def main() -> int:
     ap.add_argument("--hol-tokens", type=int, default=1200)
     ap.add_argument("--stagger-s", type=float, default=2.0)
     ap.add_argument("--gate-s", type=float, default=30.0)
+    ap.add_argument("--filler", default=FILLER,
+                    help="filler sentence; use a UNIQUE one so the cold prefill "
+                         "cannot hit blocks cached by earlier probes")
     ap.add_argument("--out", default="")
     args = ap.parse_args()
     globals()["BASE"] = args.base_url
@@ -84,8 +87,9 @@ def main() -> int:
     # ~240k-token blocking prompt (unique salt so prefix caching cannot help a
     # re-run; the small request must be cold too).
     salt = str(time.time_ns())
-    bg = FILLER * int(args.background_tokens / 16) + f"\n[salt {salt}] End of ledger."
-    small_fill = FILLER * int(args.hol_tokens / 16)
+    filler = args.filler
+    bg = filler * int(args.background_tokens / 16) + f"\n[salt {salt}] End of ledger."
+    small_fill = filler * int(args.hol_tokens / 16)
     small = (
         small_fill
         + f"\n[salt {salt}] Question: reply with the single word: ready"
@@ -128,6 +132,7 @@ def main() -> int:
             "hol_first_token_s": round(hol_ttft, 2) if hol_ttft else None,
             "gate_s": args.gate_s,
             "gate_pass": bool(hol_ttft is not None and hol_ttft <= args.gate_s),
+            "background_still_running_at_print": not bg_done.is_set(),
             "background_wall_s": round(bg_total, 1),
             "hol_error": err,
         }

@@ -1,0 +1,9 @@
+{
+  "label": "r1-auto",
+  "stamp": "20260830-0702",
+  "head_floor_kib": 464692,
+  "worker_floor_kib": 5281028,
+  "binding_node": "head",
+  "workload": ["python3","tests/bench_concurrency.py","--rounds","3","--levels","4","--max-tokens","128","--out","results/ab/r1-auto-20260830-0633/conc.json"],
+  "warning": "floors age ~1.5-2 GiB/day; fresh-boot floors are optimistic"
+}

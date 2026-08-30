@@ -1,0 +1,9 @@
+{
+  "label": "baseline-r1ref",
+  "stamp": "20260830-0750",
+  "head_floor_kib": 1208488,
+  "worker_floor_kib": 5071000,
+  "binding_node": "head",
+  "workload": ["python3","tests/bench_concurrency.py","--rounds","3","--levels","4","--max-tokens","128","--out","results/ab/baseline-r1ref-20260830-0715/conc.json"],
+  "warning": "floors age ~1.5-2 GiB/day; fresh-boot floors are optimistic"
+}

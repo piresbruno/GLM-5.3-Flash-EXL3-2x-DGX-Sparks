@@ -1,0 +1,16 @@
+PASS simple#1: ok
+PASS nested#1: ok
+PASS multi_tool#1: ok
+PASS forced_choice#1: ok
+PASS repeat#1: ok
+toolcall-probe: 5/5 = 100.00% (min 100%)
+PASS toolcall_battery
+PASS thinking_default
+PASS thinking_off
+PASS vision
+The emergency rendezvous code for convoy seven is AMBER-HERON-7741.
+PASS needle_16k
+The secondary fallback frequency for the depot beacon is 118.62 megahertz.
+PASS needle_60k
+PASS needle_16k_replay
+acceptance: ALL PROBES PASS

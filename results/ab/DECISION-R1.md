@@ -1,0 +1,73 @@
+# Campaign R1 verdicts — 2026-08-30
+
+Branch: `checkpoint-d1-baseline`. Image: `…@sha256:9bb1557a…` (digest-pinned,
+identical both ranks). Comparison source: `docs/CAMPAIGN-R1.md` /
+`results/ab/r1-phase0/`. Prior record: D1 verdict table above.
+
+## Verdict table (fresh re-bench, same protocol, interleaved boots)
+
+| Arm | MNBT | LPT | async | retention | 100k TTFT | Structured ×1 | Prose ×1 | Cache burst r2-3 | Solo replay | HOL first tok | Verdict |
+|---|---:|---:|---|---|---:|---:|---:|---:|---:|---:|---|
+| baseline-r1ref-20260830-0715 | 2048 | — | auto (ON) | — | 200.3 s | 70.21 | 27.15 | PASS | 98.6/98.7% | **461.3 s FAIL** | reference |
+| **r1-auto-20260830-0633** | **3584** | **1792** | **0 (off)** | **0** | **199.4 s** | **71.97** | **27.64** | **98.6%** | **98.7%** | **8.39 s** | **ADOPTED** |
+| dsd-r1-20260830-0725 | 3584 | 1792 | 1 (ON) + DSD | 0 | — | 66.91 | 28.87 | — | — | — | REJECTED (dormant) |
+
+KV pools: baseline 951,655 (1.59×) / R1 979,591 (1.63×) / DSD 824,571 (1.37×)
+of the 600k window — auto pool everywhere (pin REJECTED, see below).
+
+## Adopted
+
+1. **R1 bundle = new serving baseline** (r1-auto-20260830-0633):
+   - MNBT 3584 (page-exact) + long-prefill threshold 1792: the prefill gate
+     passes (199.4 s < 204.7 s record; effective ~501 tok/s vs ~489), and the
+     threshold knob eliminates head-of-line blocking — first token for a
+     1.2k request behind a 240k cold prefill: **8.39 s vs 461.3 s** on the
+     baseline config (55×). This is the bundle's decisive win; their ~893
+     tok/s prefill claim did NOT transfer (~501 here), but the HOL behavior
+     does.
+   - Structured ×1 **71.97** tok/s (accept **1.0**) — +2.5% vs the fresh
+     baseline, +9.2% vs the stale D1 record; the stale-acceptance question is
+     resolved: the xgrammar backports put structured acceptance at 1.0 and
+     account for most of the delta vs the old 65.9 record.
+   - Prose ×1 **27.64** (+1.8% vs fresh baseline).
+   - Cache: burst rounds 2–3 **98.6%** (gate 90%), solo replay **98.7%** at
+     ~200k (gate 93%) — with `VLLM_PREFIX_CACHE_RETENTION_INTERVAL=0` the
+     shared-prefix junctions and the latest boundary survive; the
+     "MNBT < 3584 → ~0% hits" claim remains unproven (retention env + aligned
+     blocks are what matter), recorded as such.
+   - Quality: serving 6/6, acceptance 7/7 (tools 5/5, thinking on/off, vision,
+     needles, cache-aware replay).
+   - Memory: floors recorded head 0.45–1.15 GiB / worker 4.84–5.04 GiB — the
+     D1 standing state persists; nothing raised.
+2. **Async OFF in the bundle** (`ASYNC_SCHEDULING=0`): their A/B (async-off ≥
+   async-on at ×1) holds here — R1 async-off beat the async-on baseline at
+   ×1 structured (71.97 vs 70.21).
+3. **KV pin REJECTED** (third freeze, NVRM `NV_ERR_NO_MEMORY` signature;
+   `results/ab/r1-phase0/freeze-20260830.md`); auto pool satisfies the pool
+   gate at 1.61–1.63×. Hard `ALLOW_KV_PIN` guard shipped.
+4. **Ops kit + hardening live**: flusher-until-stable with logged flushes,
+   post-init cache drain on both ranks (would have fed NVRM pages ahead of
+   the MM warmup burst in the freeze window), watchdog crash/wedge/
+   deliberate-stop distinction, Xid/metrics/check-updates monitors installed
+   (timers enabled on operator approval).
+
+## Rejected / dormant
+
+- **DSD (Phase 3) — REJECTED, ships dormant**: `DSD_TABLE=1:1:7,2:999:5` +
+  async ON. Receipt ACTIVE (per-position acceptance freezes at pos ≥5 under
+  c≥2; DSD capture ladder `1 2 4 8 12 18 24`; zero cudagraph downgrades), and
+  aggregate ×2/×4 beat R1 by +71%/+35% — **but ×1 structured regressed −7.0%**
+  (66.91 vs 71.97), beyond the unconditional −3% rejection threshold. The
+  regression is the async-ON cost (matches the Reederey87 async A/B). DSD
+  stays default-off. Follow-up arm (not run): isolate `ASYNC_SCHEDULING=1`
+  WITHOUT DSD at ×1 to price async alone; if async-only ×1 holds ±3%, revisit
+  DSD with a table whose solo row compensates.
+
+## Measurement notes
+
+- `usage.prompt_tokens_details.cached_tokens` is NOT populated by this fork;
+  every hit ratio here is a `vllm:prefix_cache_hits_total` delta.
+- c2/c4 aggregates are state-sensitive (warm cache from prior probes
+  inflates/subtracts TTFT components): DSD-vs-R1 aggregates were taken
+  fresh-boot-to-fresh-boot with identical protocols.
+- Tags: `baseline-r1-20260830` (this verdict), `recipe-r1-20260830`.
