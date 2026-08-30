@@ -90,6 +90,8 @@ _cli_retention="${VLLM_PREFIX_CACHE_RETENTION_INTERVAL-}"
 _cli_retention_set="${VLLM_PREFIX_CACHE_RETENTION_INTERVAL+set}"
 _cli_fiws="${FLASHINFER_WORKSPACE_BASE-}"
 _cli_fiws_set="${FLASHINFER_WORKSPACE_BASE+set}"
+_cli_qps="${NCCL_IB_QPS_PER_CONNECTION-}"
+_cli_qps_set="${NCCL_IB_QPS_PER_CONNECTION+set}"
 set -a
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/.env"
@@ -116,6 +118,7 @@ set +a
 [ "${_cli_async_set:-}" = set ] && ASYNC_SCHEDULING="$_cli_async"
 [ "${_cli_retention_set:-}" = set ] && VLLM_PREFIX_CACHE_RETENTION_INTERVAL="$_cli_retention"
 [ "${_cli_fiws_set:-}" = set ] && FLASHINFER_WORKSPACE_BASE="$_cli_fiws"
+[ "${_cli_qps_set:-}" = set ] && NCCL_IB_QPS_PER_CONNECTION="$_cli_qps"
 
 # Helpers are defined BEFORE the configuration section: the config-side guards
 # (GPU_MEM_UTIL hard limit, ASYNC_SCHEDULING validation, dsd_validate) refuse
@@ -1262,6 +1265,10 @@ launch_cluster() {
         bundle_env+=(-e "VLLM_PREFIX_CACHE_RETENTION_INTERVAL=$VLLM_PREFIX_CACHE_RETENTION_INTERVAL")
     [ -n "${FLASHINFER_WORKSPACE_BASE:-}" ] && \
         bundle_env+=(-e "FLASHINFER_WORKSPACE_BASE=$FLASHINFER_WORKSPACE_BASE")
+    # NCCL_IB_QPS_PER_CONNECTION (P1-1 arm, RESEARCH-PERF-NEXT): forward only
+    # when the operator sets it — unset = NCCL default (1 QPC per connection).
+    [ -n "${NCCL_IB_QPS_PER_CONNECTION:-}" ] && \
+        bundle_env+=(-e "NCCL_IB_QPS_PER_CONNECTION=$NCCL_IB_QPS_PER_CONNECTION")
     local worker_bundle="" be
     for be in "${bundle_env[@]}"; do
         [ "$be" = "-e" ] && continue
@@ -1468,7 +1475,7 @@ on_ready() {
     fi
     log "  features   : tools=glm47+auto, reasoning=glm45, spec=${spec}, vision=${vision}"
     log "  prefill    : max-num-batched-tokens=${MAX_NUM_BATCHED_TOKENS} (D1/R1 spec-decode step budget — verify the boot log shows this number)"
-    log "  bundle     : lpt=${LONG_PREFILL_TOKEN_THRESHOLD:-off} async=${ASYNC_SCHEDULING:-0} retention=${VLLM_PREFIX_CACHE_RETENTION_INTERVAL:-unset} flashinfer-ws=${FLASHINFER_WORKSPACE_BASE:-}"
+    log "  bundle     : lpt=${LONG_PREFILL_TOKEN_THRESHOLD:-off} async=${ASYNC_SCHEDULING:-0} retention=${VLLM_PREFIX_CACHE_RETENTION_INTERVAL:-unset} flashinfer-ws=${FLASHINFER_WORKSPACE_BASE:-} qps=${NCCL_IB_QPS_PER_CONNECTION:-nccl-default}"
     log "  mem        : head MemFree=$(memfree_gib local) GiB / worker MemFree=$(memfree_gib remote) GiB (post-init cache drain applied before warmup)"
     log "  image      : ${IMAGE}"
     log "  thinking   : served default=$( [ "${GLM53_DEFAULT_THINKING:-1}" = "1" ] && echo on || echo off ) (GLM53_DEFAULT_THINKING; clients can override)"

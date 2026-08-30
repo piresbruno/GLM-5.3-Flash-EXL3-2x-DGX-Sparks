@@ -28,6 +28,7 @@ KNOBS = {
     "KV_CACHE_MEMORY": ("", "19010164736"),
     "DFLASH_DRAFT_TP": ("1", "2"),
     "GLM53_MIXED_PREFILL_CHUNK": ("skip", "256"),
+    "NCCL_IB_QPS_PER_CONNECTION": ("", "4"),
 }
 
 
