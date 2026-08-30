@@ -260,6 +260,73 @@ def test_kv_pin_flag_is_the_exact_image_flag() -> None:
     assert '--kv-cache-memory "${KV_CACHE_MEMORY}"' not in src, "abbreviated flag form still emitted"
 
 
+def test_pin_guard_hard_refusal() -> None:
+    src = START.read_text()
+    assert "ALLOW_KV_PIN" in src and "REJECTED on this kit" in src, "hard pin guard missing"
+    with tempfile.TemporaryDirectory() as raw:
+        tmp = Path(raw)
+        script = tmp / "s.sh"
+        script.write_text(_config_slice() + '\nprintf "SURVIVED\\n"\n')
+        script.chmod(0o755)
+        (tmp / ".env").write_text("GPU_MEM_UTIL=0.85\nKV_CACHE_MEMORY=15724154880\n")
+        # no ALLOW_KV_PIN -> refused
+        r = subprocess.run(["bash", str(script)], capture_output=True, text=True,
+                           env={**os.environ, "KV_CACHE_MEMORY": "15724154880"})
+        assert r.returncode != 0 and "REJECTED" in r.stderr, "pin allowed without ALLOW_KV_PIN"
+        # ALLOW_KV_PIN=1 -> survives with a warning
+        r = subprocess.run(["bash", str(script)], capture_output=True, text=True,
+                           env={**os.environ, "KV_CACHE_MEMORY": "15724154880", "ALLOW_KV_PIN": "1"})
+        assert r.returncode == 0 and "SURVIVED" in r.stdout, "break-glass pin refused"
+        assert "ALLOW_KV_PIN=1" in r.stdout + r.stderr
+        # auto pool (no pin in .env, no env override) -> survives without any flag
+        (tmp / ".env").write_text("GPU_MEM_UTIL=0.85\n")
+        r = subprocess.run(["bash", str(script)], capture_output=True, text=True,
+                           env={k: v for k, v in os.environ.items() if k != "KV_CACHE_MEMORY"})
+        assert r.returncode == 0 and "SURVIVED" in r.stdout, "auto pool refused"
+
+
+def test_flusher_stability_exit_and_cap() -> None:
+    import http.server
+    import threading
+    flusher = ROOT / "cache_flusher.sh"
+    assert "GLM53_FLUSHER_CAP" in flusher.read_text(), "flusher cap not env-overridable"
+    # cap path: health URL unreachable -> exits at the (short) cap with a log line
+    with tempfile.TemporaryDirectory() as raw:
+        tmp = Path(raw)
+        logf = tmp / "flusher.log"
+        r = subprocess.run(
+            ["bash", str(flusher)], capture_output=True, text=True, timeout=120,
+            env={**os.environ, "GLM53_FLUSHER_CAP": "3", "GLM53_FLUSHER_MIN_STABLE": "999999",
+                 "GLM53_HEALTH_URL": "http://127.0.0.1:1/health",
+                 "GLM53_FLUSHER_LOG": str(logf)},
+        )
+        assert r.returncode == 0
+        assert "cap: " in logf.read_text() and "flusher exiting" in logf.read_text(), "cap exit not logged"
+    # stability path: healthy endpoint -> exits after min_stable + 5 probes
+    class H(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.end_headers()
+        def log_message(self, *a):
+            pass
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = Path(raw)
+            logf = tmp / "flusher.log"
+            r = subprocess.run(
+                ["bash", str(flusher)], capture_output=True, text=True, timeout=120,
+                env={**os.environ, "GLM53_FLUSHER_CAP": "600", "GLM53_FLUSHER_MIN_STABLE": "2",
+                     "GLM53_HEALTH_URL": f"http://127.0.0.1:{srv.server_port}/health",
+                     "GLM53_FLUSHER_LOG": str(logf)},
+            )
+            assert r.returncode == 0
+            assert "stable: health OK x5" in logf.read_text(), "stability exit not logged"
+    finally:
+        srv.shutdown()
+
+
 def main() -> int:
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failures = 0

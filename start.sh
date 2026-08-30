@@ -204,11 +204,18 @@ GPU_MEM_UTIL="${GPU_MEM_UTIL:-0.87}"
 if awk "BEGIN{exit !(${GPU_MEM_UTIL:-0.85} > 0.85)}" 2>/dev/null; then
     die "GPU_MEM_UTIL=${GPU_MEM_UTIL} > 0.85 is not allowed on this kit (crash review 2026-08-29: >0.85 froze both nodes). Set 0.85."
 fi
-# Pin guard: pinning skips the memory profiler (OPEN-PROBLEMS #5); only the
-# profile-time 'to fit' suggestion is defensible, and only with the cache
-# flusher + ritual. Emit a hard error for anything above the conservative
-# envelope unless CG_ESTIMATE=0 is also set (returns the graph deduction).
+# Pin guard (HARD, 2026-08-30): pins have frozen this kit three times — 17.7 GiB
+# x2 (C4, 08-29) and 14.64 GiB (R1, 08-30, dgx1 at API bring-up) — all with the
+# NVRM NV_ERR_NO_MEMORY kernel signature (results/ab/r1-phase0/freeze-20260830.md).
+# The pin reserves KV upfront from MemFree and consumes the auto path's slack,
+# which the post-init window (API bring-up + MM warmup) needs. Auto pool is the
+# R1 config: 963,265 tokens = 1.61x the 600k window. A pin requires the
+# explicit ALLOW_KV_PIN=1 break-glass plus a measured memfloor artifact (D2).
 if [ -n "${KV_CACHE_MEMORY:-}" ]; then
+    if [ "${ALLOW_KV_PIN:-0}" != "1" ]; then
+        die "KV_CACHE_MEMORY is set but pins are REJECTED on this kit (3 freezes: 17.7 GiB x2 C4, 14.64 GiB R1 — NVRM NV_ERR_NO_MEMORY at API bring-up; auto pool 963k tokens = 1.61x covers the 600k window). Unset KV_CACHE_MEMORY, or export ALLOW_KV_PIN=1 to override with a measured memfloor artifact (D2)."
+    fi
+    warn "ALLOW_KV_PIN=1: pinning KV_CACHE_MEMORY=${KV_CACHE_MEMORY} — run tools/memfloor.sh during the next saturation and watch MemFree; three pinned boots have frozen this kit"
     if [ "${CG_ESTIMATE:-1}" != "0" ]; then
         warn "KV_CACHE_MEMORY is set while CG_ESTIMATE=1: the CUDA-graph deduction (~1.4 GiB) is still reserved from the pool — prefer CG_ESTIMATE=0 over pinning"
     fi
@@ -403,6 +410,30 @@ WORKER_SCRIPT="$SCRIPT_DIR/.glm53-exl3-worker.inner.sh"
 EXPECTED_SHARDS="${EXPECTED_SHARDS:-120}"
 
 # ------------------------------- helpers -----------------------------------
+
+memfree_gib() {  # MemFree of a node: "local" | "remote" — prints N.N (GiB)
+    if [ "${1:-local}" = "remote" ]; then
+        worker_ssh "grep '^MemFree:' /proc/meminfo" 2>/dev/null | awk '{printf "%.1f", $2/1048576}'
+    else
+        awk '/^MemFree:/{printf "%.1f", $2/1048576}' /proc/meminfo
+    fi
+}
+
+post_init_cache_drop() {
+    # R1 freeze hardening (2026-08-30): the pinned boot froze with NVRM
+    # NV_ERR_NO_MEMORY at API bring-up/MM warmup while the load's 164 GiB of
+    # page cache still held RAM; drop_caches during the thrash could not save
+    # it because the deficit was structural. Drain the page cache BEFORE the
+    # warmup burst, on both nodes, and log the receipt
+    # (results/ab/r1-phase0/freeze-20260830.md).
+    log "post-init cache drain (freeze-window hardening, before MM/shape warmup) ..."
+    log "  head  : MemFree=$(memfree_gib local) GiB before drop"
+    worker_ssh "sync; echo 3 | sudo -n tee /proc/sys/vm/drop_caches >/dev/null 2>&1 || true" >/dev/null 2>&1 || true
+    log "  worker: MemFree=$(memfree_gib remote) GiB after drop"
+    sync
+    echo 3 | sudo -n tee /proc/sys/vm/drop_caches >/dev/null 2>&1 || true
+    log "  head  : MemFree=$(memfree_gib local) GiB after drop"
+}
 
 banner() {
     local label="${1:-start.sh}"
@@ -1121,12 +1152,18 @@ WARN: worker_ssh ritual failed"
 
 launch_cache_flusher() {  # $1 = "remote" or "local"
   [ "${CACHE_FLUSHER:-0}" = "1" ] || return 0
+  mkdir -p "$LOGDIR"
+  # R1 2026-08-30: the sidecar runs until the fleet is serving-stable and its
+  # flushes are LOGGED (the frozen pinned boot's sidecar was invisible and its
+  # fixed cap ended inside the danger window).
   if [ "${1:-local}" = "remote" ]; then
     scp -q -o BatchMode=yes "$SCRIPT_DIR/cache_flusher.sh" "${WORKER_SSH}:/tmp/cache_flusher.sh"  # was never shipped — worker sidecar silently failed before
-    worker_ssh "nohup bash /tmp/cache_flusher.sh >/dev/null 2>&1 & echo sidecar up"
+    worker_ssh "GLM53_HEALTH_URL='http://${HEAD_IP}:${PORT}/health' GLM53_FLUSHER_LOG='/tmp/cache_flusher-worker.log' nohup bash /tmp/cache_flusher.sh >/dev/null 2>&1 & echo sidecar up"
   else
+    GLM53_HEALTH_URL="http://127.0.0.1:${PORT}/health" \
+    GLM53_FLUSHER_LOG="$LOGDIR/cache_flusher.log" \
     nohup bash "$SCRIPT_DIR/cache_flusher.sh" >/dev/null 2>&1 &
-    echo "sidecar up (pid $!)"
+    echo "sidecar up (pid $!, log: $LOGDIR/cache_flusher.log)"
   fi
 }
 
@@ -1420,6 +1457,7 @@ on_ready() {
     log "  features   : tools=glm47+auto, reasoning=glm45, spec=${spec}, vision=${vision}"
     log "  prefill    : max-num-batched-tokens=${MAX_NUM_BATCHED_TOKENS} (D1/R1 spec-decode step budget — verify the boot log shows this number)"
     log "  bundle     : lpt=${LONG_PREFILL_TOKEN_THRESHOLD:-off} async=${ASYNC_SCHEDULING:-0} retention=${VLLM_PREFIX_CACHE_RETENTION_INTERVAL:-unset} flashinfer-ws=${FLASHINFER_WORKSPACE_BASE:-}"
+    log "  mem        : head MemFree=$(memfree_gib local) GiB / worker MemFree=$(memfree_gib remote) GiB (post-init cache drain applied before warmup)"
     log "  image      : ${IMAGE}"
     log "  thinking   : served default=$( [ "${GLM53_DEFAULT_THINKING:-1}" = "1" ] && echo on || echo off ) (GLM53_DEFAULT_THINKING; clients can override)"
     log "  weights    : mode=${WEIGHTS_MODE} (nfs => head reads ${WORKER_IP}:${NFS_PORT})"
@@ -1487,6 +1525,7 @@ start() {
 
     launch_cluster
     if wait_for_health; then
+        post_init_cache_drop
         post_ready_warmup
         on_ready
         return
@@ -1501,6 +1540,7 @@ start() {
         write_inner_scripts   # regenerate both rank scripts with the new max len
         launch_cluster
         if wait_for_health; then
+            post_init_cache_drop
             post_ready_warmup
             on_ready
             return

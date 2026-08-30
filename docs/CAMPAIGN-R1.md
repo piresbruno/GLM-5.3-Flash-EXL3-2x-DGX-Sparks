@@ -56,19 +56,28 @@ FLASHINFER_WORKSPACE_BASE= \
 ./start.sh restart
 ```
 
-**R1 arm boot** (bundle defaults; first boot UNPINNED to read the suggestion):
+**R1 arm boot** (bundle defaults, AUTO POOL — the pin is REJECTED):
 
 ```bash
 ./start.sh stop
-./start.sh restart            # bundle defaults from start.sh/.env
-# read the pin suggestion from the on_ready receipt:
-#   kv-pin : unpinned — engine suggests --kv-cache-memory-bytes=N
-# then pin at (N - margin), e.g. margin 1.0 GiB:
-#   KV_CACHE_MEMORY=<N-1073741824> ./start.sh restart
+CACHE_FLUSHER=1 ./start.sh restart   # bundle defaults from start.sh/.env
 ```
 
-Pin gate: 3 cold boots (`./start.sh stop && ./start.sh restart`) produce a
-**byte-identical pool line** (`GPU KV cache size: …` in the head log).
+**KV pin: REJECTED (2026-08-30).** Three pinned boots froze this kit with the
+NVRM `NV_ERR_NO_MEMORY` kernel signature — 17.7 GiB ×2 (C4, 08-29, both nodes)
+and 14.64 GiB (R1, 08-30, dgx1 at API bring-up; full forensics in
+`results/ab/r1-phase0/freeze-20260830.md`). The pin reserves KV upfront from
+MemFree and consumes the auto path's slack, which the post-init window (API
+bring-up + MM warmup) needs. **Auto pool is the R1 config**: 963,265 tokens =
+**1.61×** the 600k window — satisfies the pool gate with margin. start.sh now
+refuses any pin unless `ALLOW_KV_PIN=1` (break-glass + measured memfloor
+artifact, D2 methodology).
+
+Freeze-window hardening now in every boot: the cache-flusher sidecar runs
+**until the fleet is serving-stable** (health OK ×5 past 900 s, cap 45 min,
+logged to `logs/cache_flusher.log`), and a **post-init cache drain** runs on
+both nodes after health and before the MM/shape warmup burst.
+
 Boot once per arm, then run, interleaved, per AB-PLAN:
 
 ```bash
@@ -100,7 +109,7 @@ tools/memfloor.sh <arm> -- python3 tests/bench_concurrency.py
 | Cache burst (4×60k ×3 rounds) | rounds 2–3 mean hit ≥ 90% |
 | Cache solo 110k replay | hit ≥ 93% held |
 | HOL (1.2k behind 240k cold) | first token ≤ 30 s |
-| Pool / memory | pinned bytes ≥ 1.0× of the 600k window; memfloor binding ≥ 5 GiB; 3 cold boots byte-identical pool line |
+| Pool / memory | pool ≥ 1.0× of the 600k window (auto: 963,265 = **1.61×** ✓); memfloor artifact recorded per arm (D1 standing state: head 0.53 / worker 4.3–5.2 GiB) |
 | Stability | 0 preemptions, no NaN, no dmesg faults; DSD off |
 
 **Exit:** bundle adopted as baseline → `results/ab/DECISION.md` R1 entry,
@@ -152,5 +161,10 @@ python3 tests/verify_dsd.py                                     # receipt must p
 4. **Pin flag spelled `--kv-cache-memory-bytes`** — the exact flag the pinned
    image registers (the kit historically emitted the abbreviated
    `--kv-cache-memory` form).
-5. **DSD arm runs unpinned** — recorded deviation from the bundle geometry
-   (pin × async admission-check interaction).
+5. **KV pin REJECTED entirely** (2026-08-30 freeze): the upstream kit's 14.36 GiB
+   pin reference does NOT transfer — our kit froze at 14.64 GiB (and twice at
+   17.7 GiB in C4) with the NVRM `NV_ERR_NO_MEMORY` kernel signature, always in
+   the post-init window. Auto pool (1.61× margin) is the R1 geometry; the DSD
+   arm's "pin off" deviation is now moot (nothing is pinned).
+6. **DSD arm runs unpinned** — moot after the pin rejection (nothing is
+   pinned); the async admission-check interaction is avoided by construction.

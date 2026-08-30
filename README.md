@@ -266,7 +266,7 @@ ported components are credited in `NOTICE`.
 | `VLLM_PREFIX_CACHE_RETENTION_INTERVAL` | `0` | sparse KDA retention (fork env): retain only prompt boundaries + shared-prefix junctions; forwarded to **both ranks**, only when non-empty (an empty string crashes boot) |
 | `FLASHINFER_WORKSPACE_BASE` | `/root/.cache/vllm/flashinfer` | FlashInfer JIT workspace inside the mounted vLLM cache — kernels survive container recreate; watchdog heals pay no re-JIT |
 | `IMAGE` | `…@sha256:9bb1557a…` | digest pin + `SKIP_PULL=1`: a restart can never silently upgrade. `BUILD=1` with a digest ref is refused |
-| `KV_CACHE_MEMORY` | *(measure then pin)* | boot once **unpinned**, read vLLM's suggested budget (on_ready receipt prints it), pin at (suggested − margin), never raise. Gate: 3 cold boots with a byte-identical pool line |
+| `KV_CACHE_MEMORY` | *(unset — pin REJECTED)* | three pinned boots froze this kit with the NVRM `NV_ERR_NO_MEMORY` kernel signature (17.7 GiB ×2 C4, 14.64 GiB R1 — `results/ab/r1-phase0/freeze-20260830.md`). Auto pool = 963,265 tokens = **1.61×** the 600k window. A pin requires `ALLOW_KV_PIN=1` + a measured memfloor artifact (D2) |
 
 **DSD concurrency arm (D5, on top of R1):** `DSD_TABLE=1:1:7,2:999:5
 ASYNC_SCHEDULING=1 ./start.sh restart` — async ON, **pin OFF** (auto pool;
@@ -446,7 +446,7 @@ that are now documented/enforced:
 | `ASYNC_SCHEDULING` | `0` | R1 bundle: `0` = `--no-async-scheduling` (bundle baseline), `1` = `--async-scheduling` (DSD arm), `auto` = pass neither (vLLM decides). `start.sh` refuses `DSD_TABLE` without `1` |
 | `VLLM_PREFIX_CACHE_RETENTION_INTERVAL` | `0` | R1 bundle: sparse KDA retention (fork env) — `0` retains only prompt boundaries + shared-prefix junctions; unset/empty = dense. Forwarded to both ranks only when non-empty (empty string crashes boot) |
 | `FLASHINFER_WORKSPACE_BASE` | `/root/.cache/vllm/flashinfer` | R1 bundle: FlashInfer JIT workspace inside the mounted vLLM cache — survives container recreate |
-| `KV_CACHE_MEMORY` | *(unset)* | R1 pin procedure: boot unpinned, read the suggested budget (on_ready receipt), pin at (suggested − margin), never raise. Emits `--kv-cache-memory-bytes "N"` (quoted) |
+| `KV_CACHE_MEMORY` | *(unset)* | **pin REJECTED** (3 freezes, NVRM OOM signature — see the R1 section). Hard guard: dies unless `ALLOW_KV_PIN=1`. Emits `--kv-cache-memory-bytes "N"` (quoted) when allowed |
 | `GLM53_MIXED_PREFILL_CHUNK` | `skip` | do not mix a peer prefill into a decode step (issue #6). `N>0` = cap tokens; `0` = off. Solo prefill stays 1024 |
 | `GLM53_SUPPRESS_STOPS_IN_REASONING` | `1` | ignore client `stop` strings until `</think>` (thinking-on default) |
 | `GLM53_BOOT_SHAPE_WARMUP` | `1` | after `/health`, burn DFlash2 BLOCK / sampler / kpool shapes (nonfatal) |

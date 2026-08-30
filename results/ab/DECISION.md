@@ -38,12 +38,28 @@ wins, ported and re-gated.
 
 **Pending (on-GPU, runbook `docs/CAMPAIGN-R1.md`):** Phase 2 bundle A/B
 (re-benched baseline arm vs R1 arm, interleaved, gates in the runbook),
-Phase 3 DSD concurrency arm (`DSD_TABLE=1:1:7,2:999:5 ASYNC_SCHEDULING=1`,
-pin off — recorded deviation), Phase 4 ops activation + `recipe-r1-<date>`
-tag. Recorded deviations from upstream: loopback bind NOT adopted (operator
-keeps LAN; exposure documented in README); "MNBT < 3584 → ~0% hits" not
-adopted blind (our 93% solo hits at MNBT=1024 contradict it — retention env
-is the multi-session lever, re-gated by our own cache probes).
+Phase 3 DSD concurrency arm (`DSD_TABLE=1:1:7,2:999:5 ASYNC_SCHEDULING=1`),
+Phase 4 ops activation + `recipe-r1-<date>` tag. Recorded deviations from
+upstream: loopback bind NOT adopted (operator keeps LAN; exposure documented
+in README); "MNBT < 3584 → ~0% hits" not adopted blind (our 93% solo hits at
+MNBT=1024 contradict it — retention env is the multi-session lever, re-gated
+by our own cache probes).
+
+**UPDATE 2026-08-30 — KV pin REJECTED after the third freeze.** The pinned
+boot (14.64 GiB = to-fit − 1 GiB, per the then-current procedure) froze dgx1
+at API bring-up; kernel journal shows an `NVRM NV_ERR_NO_MEMORY` storm
+(05:19:28 → journal end 05:33:15, flusher dropping caches every 5 s in
+between) — the same signature that preceded the C4 freezes (17.7 GiB ×2).
+Forensics: `results/ab/r1-phase0/freeze-20260830.md`. Root cause: the pin
+reserves KV upfront from MemFree, consuming the auto path's slack that the
+post-init window (API bring-up + head-only MM warmup burst) needs. **Auto
+pool adopted as the R1 geometry: 963,265 tokens = 1.61× the 600k window**
+(measured on the healthy unpinned boot). Hardening shipped: start.sh refuses
+pins without `ALLOW_KV_PIN=1`; cache-flusher runs until serving-stable
+(health ×5, cap 45 min) with a visible log; a post-init cache drain runs on
+both nodes before the MM/shape warmup. Phase-2 gate reinterpretation:
+"pinned bytes ≥ 1.0× window" → "pool ≥ 1.0× window" (auto passes at 1.61×);
+the pin-only 3-cold-boots-byte-identical gate is dropped with the pin.
 
 ## Verdict table
 
