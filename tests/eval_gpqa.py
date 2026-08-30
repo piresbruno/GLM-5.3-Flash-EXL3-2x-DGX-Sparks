@@ -58,11 +58,10 @@ def fetch_rows(length: int) -> list[dict]:
         if isinstance(last, Exception) and str(last) != "unreachable":
             # datasets-server rate-limits (429) independently of the hub CDN —
             # fall back to the gated CSV via the resolve endpoint (same rows).
-            if offset == 0:
-                try:
-                    return _gpqa_csv_fallback()
-                except Exception as fe:  # noqa: BLE001
-                    print(f"  csv fallback failed: {fe}", flush=True)
+            try:
+                return _gpqa_csv_fallback()[:length]
+            except Exception as fe:  # noqa: BLE001
+                print(f"  csv fallback failed: {fe}", flush=True)
             raise last
         if chunk == 0:
             break
@@ -123,7 +122,7 @@ def main() -> int:
     ap.add_argument("--out", default="")
     a = ap.parse_args()
 
-    rows = fetch_rows(500)
+    rows = fetch_rows(a.n)
     rng = random.Random(a.seed)
     sample = rng.sample(rows, min(a.n, len(rows)))
     print(f"gpqa_diamond: {len(sample)} items, temp 0, thinking off")

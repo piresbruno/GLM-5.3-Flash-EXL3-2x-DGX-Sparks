@@ -6,13 +6,16 @@ thinking **off** (the evals' design), GPU clocks 2190 MHz (underclock).
 | Eval | Result | Gate | Note |
 |---|---|---|---|
 | math500 (n=100) | **66/100 = 66.0%** | 86 (script default) | first D3 measurement = the quality floor; the 86% default gate was calibrated for a different (likely thinking-ON) regime — the recorded floor is what future arms diff against |
-| gpqa_diamond (n=50) | **BLOCKED** | 70 | `Idavidrein/gpqa` is gated on HF and the local token has not accepted the dataset terms (404 with auth) — **operator action: accept the gate at https://huggingface.co/datasets/Idavidrein/gpqa, then rerun `python3 tests/eval_gpqa.py`** |
+| gpqa_diamond (n=50) | **24/50 = 48.0%** | 70 (script default) | thinking off; consistent with the math500 floor (GPQA diamond is harder). Completed via the hub-CSV fallback after datasets-server 429 throttling |
 
 ## Eval harness fixes shipped with this baseline
 - `fetch_rows` now authenticates datasets-server with the local HF token
   (MATH-500/GPQA went gated upstream — 39aff6f).
 - Retries with backoff + **pagination** (datasets-server caps `length` at
   100; `fetch_rows(500)` could never succeed — 4e0ed4f, a8ce7a8).
+- gpqa: hub-CSV fallback when datasets-server 429-throttles mid-pagination,
+  and `fetch_rows(a.n)` (fetch only what the sample needs — gpqa_diamond has
+  198 rows; requesting 500 wasted pages and tripped the throttle).
 
 ## Interpretation guardrail
 66% at thinking-off is the **floor**, not a regression signal — there is no
