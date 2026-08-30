@@ -24,12 +24,23 @@ CONFIG = "gpqa_diamond"
 SPLIT = "train"
 
 
+def _hf_auth_header() -> dict:
+    """MATH-500/GPQA went gated upstream — auth with the local HF token if present."""
+    import os
+    token = os.environ.get("HF_TOKEN")
+    if not token:
+        p = os.path.expanduser("~/.cache/huggingface/token")
+        if os.path.exists(p):
+            token = open(p).read().strip()
+    return {"Authorization": f"Bearer {token}"} if token else {}
+
+
 def fetch_rows(length: int) -> list[dict]:
     url = (
         f"{API_BASE}?dataset={DATASET}&config={CONFIG}&split={SPLIT}"
         f"&offset=0&length={length}"
     )
-    with urllib.request.urlopen(url, timeout=60) as r:
+    with urllib.request.urlopen(urllib.request.Request(url, headers=_hf_auth_header()), timeout=60) as r:
         data = json.load(r)
     return [row["row"] for row in data["rows"]]
 
