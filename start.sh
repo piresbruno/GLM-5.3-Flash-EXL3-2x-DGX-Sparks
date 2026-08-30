@@ -420,6 +420,8 @@ TRITON_CACHE_DIR="${TRITON_CACHE_DIR:-/root/.triton/cache}"
 TILELANG_CACHE_DIR="${TILELANG_CACHE_DIR:-/root/.tilelang/cache}"
 
 LOGDIR="$SCRIPT_DIR/logs"
+CLUSTER_LOCK="$LOGDIR/cluster.lock"
+CLUSTER_LOCK_PID="$LOGDIR/cluster.lock.pid"
 HEAD_SCRIPT="$SCRIPT_DIR/.glm53-exl3-head.inner.sh"
 WORKER_SCRIPT="$SCRIPT_DIR/.glm53-exl3-worker.inner.sh"
 EXPECTED_SHARDS="${EXPECTED_SHARDS:-120}"
@@ -483,6 +485,38 @@ validate_numeric_config() {
     _glm53_canonical_positive_int MAX_NUM_BATCHED_TOKENS "$MAX_NUM_BATCHED_TOKENS" 8388608 || return
 }
 # GLM53 numeric config guard (end)
+
+# Serialize start/restart so a second launcher cannot docker-rm the first's
+# containers mid wait_for_health (false "head container exited" + empty logs).
+with_cluster_lock() {
+    mkdir -p "$LOGDIR"
+    exec 9>"$CLUSTER_LOCK"
+    if ! flock -n 9; then
+        local holder
+        holder="$(tr -d '[:space:]' <"$CLUSTER_LOCK_PID" 2>/dev/null || true)"
+        die "another start.sh is already running${holder:+ (pid $holder)}"
+    fi
+    echo $$ >"$CLUSTER_LOCK_PID"
+}
+
+steal_cluster_lock_for_stop() {
+    mkdir -p "$LOGDIR"
+    exec 9>"$CLUSTER_LOCK"
+    if flock -n 9; then
+        echo $$ >"$CLUSTER_LOCK_PID"
+        return 0
+    fi
+    local holder
+    holder="$(tr -d '[:space:]' <"$CLUSTER_LOCK_PID" 2>/dev/null || true)"
+    if [ -n "$holder" ] && [ "$holder" != "$$" ] && kill -0 "$holder" 2>/dev/null; then
+        warn "terminating in-flight start.sh pid $holder before stop"
+        kill "$holder" 2>/dev/null || true
+    fi
+    if ! flock -w 30 9; then
+        warn "cluster lock still busy — removing containers anyway"
+    fi
+    echo $$ >"$CLUSTER_LOCK_PID"
+}
 
 banner() {
     local label="${1:-start.sh}"
@@ -1498,12 +1532,39 @@ wait_for_health() {
     docker logs -f --tail 0 "$CONTAINER_HEAD" 2>&1 &
     logpid=$!
 
-    local elapsed=0 healthy=0 exited=0
+    local elapsed=0 healthy=0 exited=0 dead_side="" worker_fail=0 head_fail=0
     while [ "$elapsed" -lt "$READY_TIMEOUT" ]; do
         if curl -fsS -m 5 "$url" >/dev/null 2>&1; then healthy=1; break; fi
-        if ! docker inspect -f '{{.State.Running}}' "$CONTAINER_HEAD" 2>/dev/null | grep -q true; then
-            log "head container exited during startup"
-            exited=1; break
+        # Keep the inspect result out of a grep -q pipeline. With pipefail,
+        # grep can close early and make a running container look dead.
+        # Same 3-strike window as the worker: one transient docker miss must
+        # not abort a multi-minute weight load.
+        if [ "$(docker inspect -f '{{.State.Running}}' "$CONTAINER_HEAD" 2>/dev/null || true)" = "true" ]; then
+            head_fail=0
+        else
+            head_fail=$((head_fail + 1))
+            if [ "$head_fail" -ge 3 ]; then
+                if docker inspect "$CONTAINER_HEAD" >/dev/null 2>&1; then
+                    log "head container not running during startup (3 consecutive checks)"
+                else
+                    log "head container missing during startup (removed by concurrent stop/restart?)"
+                fi
+                exited=1; dead_side="head"; break
+            fi
+        fi
+        # A dead worker rank can never make the head healthy — fail fast with
+        # the log dump instead of polling for the full READY_TIMEOUT (issue
+        # #22, item 4). Transient ssh/docker hiccups are tolerated; only
+        # three consecutive non-running answers (~30 s) count as a dead
+        # worker.
+        if [ "$(worker_ssh "docker inspect -f '{{.State.Running}}' '$CONTAINER_WORKER' 2>/dev/null" || true)" = "true" ]; then
+            worker_fail=0
+        else
+            worker_fail=$((worker_fail + 1))
+            if [ "$worker_fail" -ge 3 ]; then
+                log "worker container '$CONTAINER_WORKER' not running on ${WORKER_SSH} (3 consecutive checks)"
+                exited=1; dead_side="worker"; break
+            fi
         fi
         sleep 10; elapsed=$((elapsed + 10))
     done
@@ -1514,7 +1575,7 @@ wait_for_health() {
     if [ "$healthy" = "1" ]; then
         log "health check passed after ${elapsed}s — server is up"
     elif [ "$exited" = "1" ]; then
-        warn "head container exited after ${elapsed}s"
+        warn "${dead_side:-head} container exited/stopped after ${elapsed}s"
     else
         warn "timed out after ${elapsed}s without becoming healthy"
     fi
@@ -1611,7 +1672,7 @@ on_ready() {
 }
 
 # ------------------------------- start -------------------------------------
-start() {
+start_unlocked() {
     preflight
     ensure_image
     download_weights
@@ -1633,7 +1694,7 @@ start() {
         post_init_cache_drop
         post_ready_warmup
         on_ready
-        return
+        return 0
     fi
     # Boot-lottery fallback: on a clean memory-shortfall refuse (9.xx < 9.66 GiB
     # needed for 1M), vLLM suggests the actual max length. Retry ONCE with that
@@ -1659,8 +1720,12 @@ start() {
     die "server did not become healthy — full logs in $LOGDIR/"
 }
 
-# ------------------------------- stop --------------------------------------
-stop() {
+start() {
+    with_cluster_lock
+    start_unlocked
+}
+
+stop_containers() {
     log "stopping head container ..."
     docker rm -f "$CONTAINER_HEAD" >/dev/null 2>&1 || log "  (no head container was running)"
     log "stopping worker container on ${WORKER_SSH} ..."
@@ -1672,6 +1737,13 @@ stop() {
     mkdir -p "$LOGDIR"
     : > "$LOGDIR/.watchdog-paused"
     log "stopped (watchdog paused via $LOGDIR/.watchdog-paused until the next launch)"
+}
+
+# ------------------------------- stop --------------------------------------
+stop() {
+    steal_cluster_lock_for_stop
+    stop_containers
+    rm -f "$CLUSTER_LOCK_PID"
 }
 
 # ------------------------------ status -------------------------------------
@@ -1721,7 +1793,11 @@ main() {
         start)    shift || true; start ;;
         download) download_only ;;
         stop)     stop ;;
-        restart)  stop; start ;;
+        restart)
+            with_cluster_lock
+            stop_containers
+            start_unlocked
+            ;;
         status)   status ;;
         logs)     shift || true; logs "$@" ;;
         -h|--help|help) usage ;;
