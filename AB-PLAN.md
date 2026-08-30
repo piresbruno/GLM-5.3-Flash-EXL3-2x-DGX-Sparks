@@ -270,27 +270,36 @@ prefill tokens into decode steps) vs bundle baseline `skip`. Everything else
 window, auto pool). Env-only — no code change; the inline-override wiring is
 covered by `tests/test_start_arm_overrides.py`.
 
-**Protocol:** baseline re-serve + arm re-serve, A/B/B/A interleave preferred
-(rule 3); `./start.sh stop` both ranks between serves; ≥2 warmup gens per
-serve; temp 0 AND production temp phases (rule 9). Results dir
-`results/ab/mixed-chunk-1024-<YYYYMMDD-HHMM>/` with `arm.json` + `summary.md`.
-Per arm:
+**Protocol:** baseline re-serve + arm re-serve, single serve per arm (rule 3
+allows it — this knob is not in the C2/C6/C7 mandatory-interleave list);
+`./start.sh stop` both ranks between serves; ≥2 warmup gens per serve
+(harnesses warm up internally); production-temp leg = the concurrency ladder
+at its default temp 1.0, structured = temp 0 (rule 9). Results dirs
+`results/ab/mixed-chunk-base-<YYYYMMDD-HHMM>/` (baseline `skip`) and
+`results/ab/mixed-chunk-1024-<YYYYMMDD-HHMM>/` with `arm.json` +
+`summary.md`. Per serve, the **standard R1 suite** (identical commands to
+`r1-auto-20260830-0633`, so the gate compares like for like):
 
 ```bash
-GLM53_MIXED_PREFILL_CHUNK=1024 ./start.sh restart   # arm; baseline = skip
-python3 tests/bench_decode.py --phase structured --structured --runs 5 --max-tokens 400 --skip-coherence --out results/ab/mixed-chunk-1024-<stamp>/structured.json
-python3 tests/bench_decode.py --phase prose       --runs 5 --max-tokens 400 --skip-coherence --out results/ab/mixed-chunk-1024-<stamp>/prose.json
-python3 tests/bench_concurrency.py --long-prompt-tokens 90000 --levels 4 --rounds 3 --out results/ab/mixed-chunk-1024-<stamp>/conc-cold90k.json
-python3 tests/bench_concurrency.py --long-prompt-tokens 36000 --levels 3 --rounds 3 --out results/ab/mixed-chunk-1024-<stamp>/conc-cold36k.json
-python3 tests/bench_prefix_cache.py --label mixed-chunk-1024 --out results/ab/mixed-chunk-1024-<stamp>
-python3 tools/hol_probe.py --out results/ab/mixed-chunk-1024-<stamp>/hol.json
+GLM53_MIXED_PREFILL_CHUNK=1024 ./start.sh restart   # arm; baseline = plain restart
+python3 tests/bench_decode.py --phase structured --structured --runs 5 --max-tokens 400 --skip-coherence --out results/ab/<arm>/structured.json
+python3 tests/bench_decode.py --phase prose       --runs 5 --max-tokens 400 --skip-coherence --out results/ab/<arm>/prose.json
+python3 tests/bench_concurrency.py --out results/ab/<arm>/conc.json                     # ×1/×2/×4 ladder, temp 1.0
+python3 tests/bench_concurrency.py --long-prompt-tokens 100000 --levels 1 --rounds 3 --max-tokens 64 --out results/ab/<arm>/longprompt-100k.json
+python3 tests/bench_prefix_cache.py --label <arm> --out results/ab/<arm>
+python3 tools/hol_probe.py --out results/ab/<arm>/hol.json
+local/serving-probe.sh && local/acceptance.sh
+./tests/collect_fingerprint.sh > results/ab/<arm>/fingerprint.json
 ```
 
-Record per arm: TTFT by admission position (concurrency probes), TPOT p95 of
-co-running decodes during the mixed window, prefill tok/s,
-`vllm:kv_cache_usage_perc`, preemptions (gate **0**), acceptance ±2 pt, and
-the full §0.7 fingerprint (git HEAD + image digest on head AND worker) in
-`arm.json`.
+**Mixed-chunk readouts come out of the standard artifacts** — no custom
+scenario: decode-under-prefill contention = `conc.json` aggregate tok/s and
+TTFT at ×2/×4; solo prefill = `longprompt-100k.json` TTFT/tok-s; admission
+delay behind a long prefill = `hol.json` first-token; ×1 decode regression =
+`structured.json`/`prose.json`; APC hit-rate guard = `cache.json`; plus
+preemptions (gate **0**) and acceptance ±2 pt from `/metrics`. `arm.json`
+carries the full §0.7 fingerprint (git HEAD + image digest on head AND
+worker).
 
 **Gate (issue #43 decision rule):** ADOPT only if cold-prefill TTFT by
 admission position improves ≥10% (the C6 bar) with structured/prose decode
