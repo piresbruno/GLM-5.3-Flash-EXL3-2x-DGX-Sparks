@@ -229,13 +229,17 @@ cache above. The cap binds only when single requests grow past it: at 200k,
 600k/1M they are admitted and queue on capacity instead. Choose per
 deployment — do not flip the fleet default mid-campaign (arm geometry).
 
-**Cold-prefill serialization.** Under `GLM53_MIXED_PREFILL_CHUNK=skip` a
-second *cold* prefill waits for the in-flight one (`Deferred` above). Decode
-head-of-line blocking behind a long prefill is already fixed by the R1
-bundle's long-prefill threshold (first token behind a 240k cold prefill:
-**8.39 s vs 461.3 s** pre-R1). Remaining levers, each a gated arm:
-`GLM53_MIXED_PREFILL_CHUNK=N>0` (mixes prefill chunks into decode steps —
-queued cold prefills start sooner, decode TPOT jitters; A/B pending),
+**Cold-prefill serialization.** Under the old `skip` default a second *cold*
+prefill waited for the in-flight one (`Deferred` above) — the “more than 1
+session clogs everything” report in issue #43. Since 2026-08-30 the default
+mixes up to **1024** prefill tokens into decode steps when peers are
+decoding: TTFT at ×2/×4 concurrency dropped **−94%/−96%** (7.0/12.2 s →
+0.43/0.53 s), aggregate throughput rose **+69%/+38%**, ×1 decode improved,
+zero preemptions, APC hits identical (`results/ab/DECISION-R1.md`, Phase
+3.5). Cost: per-stream decode tok/s drops during contention (TPOT jitters
+while a peer prefill mixes) — every request still finishes sooner. Set
+`GLM53_MIXED_PREFILL_CHUNK=skip` to restore never-mix; solo prefill stays
+1024-token chunks. Remaining levers, each a gated arm:
 `ASYNC_SCHEDULING=1` solo (never isolated from DSD), `MAX_NUM_SEQS=8`
 (per-request mamba/draft floor grows per admission), and bounded default
 output (upstream decode-hygiene PR). `MAX_NUM_BATCHED_TOKENS` is already
@@ -499,7 +503,7 @@ that are now documented/enforced:
 | `VLLM_PREFIX_CACHE_RETENTION_INTERVAL` | `0` | R1 bundle: sparse KDA retention (fork env) — `0` retains only prompt boundaries + shared-prefix junctions; unset/empty = dense. Forwarded to both ranks only when non-empty (empty string crashes boot) |
 | `FLASHINFER_WORKSPACE_BASE` | `/root/.cache/vllm/flashinfer` | R1 bundle: FlashInfer JIT workspace inside the mounted vLLM cache — survives container recreate |
 | `KV_CACHE_MEMORY` | *(unset)* | **pin REJECTED** (3 freezes, NVRM OOM signature — see the R1 section). Hard guard: dies unless `ALLOW_KV_PIN=1`. Emits `--kv-cache-memory-bytes "N"` (quoted) when allowed |
-| `GLM53_MIXED_PREFILL_CHUNK` | `skip` | do not mix a peer prefill into a decode step (issue #6). `N>0` = cap tokens; `0` = off. Solo prefill stays 1024 |
+| `GLM53_MIXED_PREFILL_CHUNK` | `1024` | mix up to 1024 prefill tokens into decode steps when peers decode (Phase 3.5, issue #43: TTFT −94/−96% at ×2/×4, aggregate +69/+38%, ×1 +3–4%, 0 preemptions). `skip` = never mix (the pre-2026-08-30 default, issue #6); `0` = unbounded. Solo prefill stays 1024 |
 | `GLM53_SUPPRESS_STOPS_IN_REASONING` | `1` | ignore client `stop` strings until `</think>` (thinking-on default) |
 | `GLM53_BOOT_SHAPE_WARMUP` | `1` | after `/health`, burn DFlash2 BLOCK / sampler / kpool shapes (nonfatal) |
 | `TRITON_HOST_CACHE` / `TILELANG_HOST_CACHE` | `$CACHE_ROOT/triton` / `tilelang` | persist JIT caches across container recreate |

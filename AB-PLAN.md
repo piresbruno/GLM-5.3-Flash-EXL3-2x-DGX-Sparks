@@ -309,6 +309,11 @@ recorded in `results/ab/DECISION-R1.md`. On adoption, flip the
 The README “Cold-prefill serialization” levers note ships with the docs
 commit regardless of the verdict.
 
+**Verdict (2026-08-30): ADOPTED** — TTFT −94/−96% at ×2/×4, aggregate
++69/+38%, ×1 +3–4%, acceptance unchanged, zero preemptions, APC hits
+identical; default flipped to `1024`. Full table:
+`results/ab/DECISION-R1.md` (Phase 3.5 section).
+
 ---
 
 ## Phase 4 — Final combined state + regression
