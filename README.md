@@ -196,9 +196,50 @@ Live occupancy, temp **0**, thinking **off**, unique pads, `max_tokens=8`:
 | ~300k ×1 streamed | **200** | **26.0%** | **356 s** TTFT (~840 tok/s) | 299,213 prompt tokens, gen `OK` |
 
 Live **3×256k** held (the original failure). Prefills still serialize under skip; two 256k contexts were in KV at once at 29.5%. One 256k sat ~25%. Hybrid occupancy is a large length-independent floor (mamba + DFlash window) plus MLA pages that scale: 36k → 16%, 256k → ~25%, 300k → 26%.
-Default is **1M**. Do **not** drop `MAX_MODEL_LEN` to 256k to “free” slots —
-logged tokens ≈ concurrency × that cap, and the hybrid floor then shrinks the
-pool.
+**Shipped default is `600000`** (`.env.example`, D1 operator decision
+2026-08-29; the first `./start.sh` run copies it to `.env`). The `start.sh`
+fallback is **1M** only when `MAX_MODEL_LEN` is unset or empty. Do **not**
+drop the window to 256k to “free” slots — logged tokens ≈ concurrency × that
+cap, and the hybrid floor then shrinks the pool. The cap is a **ceiling, not
+a reservation** (issue #43): lowering it changes admission only, never the
+pool size.
+
+### Queueing vs `MAX_NUM_SEQS`: read the gauges right (issue #43)
+
+`--max-num-seqs 4` is four *in-flight* generations — it reserves nothing.
+Admission is KV-capacity-bound per request: the R1 auto pool is **~950–980k**
+tokens ≈ **1.6×** the 600k window, and an independent second-fleet
+measurement (issue #43) read **~31%** on `vllm:kv_cache_usage_perc` for one
+258k prompt — the *effective* pool sits well below nominal (hybrid mamba +
+SWA + DFlash2 draft state take the rest). One long request can therefore
+block the next admission while seq slots are free: below-4 queueing with
+large requests is expected behavior, not a bug.
+
+`num_requests_waiting_by_reason{reason="capacity"}` is **not** a KV
+diagnostic in this build — the fork's `loggers.py:1117` sets it from plain
+`num_waiting_reqs`, so it labels *every* waiting request “capacity”.
+Diagnose with `vllm:kv_cache_usage_perc` plus prefill tok/s counter deltas
+instead.
+
+**Profile guidance.** Interactive fleets (many concurrent sessions ≤200k,
+e.g. 4 × 90k) are not served better by shrinking the window — such traffic
+never touches a 600k cap, and follow-up turns already ride the 93% prefix
+cache above. The cap binds only when single requests grow past it: at 200k,
+~4 full-length requests fit concurrently but >200k prompts are rejected; at
+600k/1M they are admitted and queue on capacity instead. Choose per
+deployment — do not flip the fleet default mid-campaign (arm geometry).
+
+**Cold-prefill serialization.** Under `GLM53_MIXED_PREFILL_CHUNK=skip` a
+second *cold* prefill waits for the in-flight one (`Deferred` above). Decode
+head-of-line blocking behind a long prefill is already fixed by the R1
+bundle's long-prefill threshold (first token behind a 240k cold prefill:
+**8.39 s vs 461.3 s** pre-R1). Remaining levers, each a gated arm:
+`GLM53_MIXED_PREFILL_CHUNK=N>0` (mixes prefill chunks into decode steps —
+queued cold prefills start sooner, decode TPOT jitters; A/B pending),
+`ASYNC_SCHEDULING=1` solo (never isolated from DSD), `MAX_NUM_SEQS=8`
+(per-request mamba/draft floor grows per admission), and bounded default
+output (upstream decode-hygiene PR). `MAX_NUM_BATCHED_TOKENS` is already
+tuned: do not raise it to 8192 (GB10 indexer oversubscribe) or to “fix” APC.
 
 Keep **`SKIP_MM_PROFILING=1`** — a max-size image+video dummy profile OOMs this UMA.
 `LIMIT_MM={"image":4,"video":1}`.
@@ -451,7 +492,7 @@ that are now documented/enforced:
 | `KV_CACHE_DTYPE` | `fp8` | packed `fp8_ds_mla`; not `nvfp4`, not bf16 |
 | `GPU_MEM_UTIL` | `0.85` | GB10 UMA budget — hard ceiling (crash review: >0.85 froze both nodes; start.sh refuses). The live pool at 600k window gives ~1.6× concurrency margin |
 | `MAX_MODEL_LEN` | `600000` | Operator decision (2026-08-29, DSD campaign): 600k window — same UMA pool gives ~1.6× concurrency margin (was 1.08× at 900k). Do not drop to 256k to “free” KV — logged tokens ≈ concurrency × this cap; hybrid block-id overhead then shrinks the pool |
-| `MAX_NUM_SEQS` | `4` | decode batch; MTP adds k+1 tokens/seq |
+| `MAX_NUM_SEQS` | `4` | decode batch; MTP adds k+1 tokens/seq. **Ceiling, not a reservation** — admission is KV-capacity-bound; a full 600k request ≈ 62% of the ~950–980k auto pool, so below-4 queueing with large requests is expected (issue #43) |
 | `MAX_NUM_BATCHED_TOKENS` | `3584` | R1 bundle (page-exact, 14 × 256-token pages; was D1's 2048, ladder 512→1024→2048). Spec-decode step budget; 8192 oversubscribes GB10 indexer topk. Raising further shrinks the pool — re-run the D1 gate + memfloor |
 | `LONG_PREFILL_TOKEN_THRESHOLD` | `1792` | R1 bundle: requests above this take the long-prefill scheduling path; emitted as `--long-prefill-token-threshold` directly (never via `EXTRA_ARGS`). Empty = scheduler default (cap off) |
 | `ASYNC_SCHEDULING` | `0` | R1 bundle: `0` = `--no-async-scheduling` (bundle baseline), `1` = `--async-scheduling` (DSD arm), `auto` = pass neither (vLLM decides). `start.sh` refuses `DSD_TABLE` without `1` |
