@@ -1442,16 +1442,22 @@ on_ready() {
     fi
     # R1 KV-pin procedure (docs/CAMPAIGN-R1.md): boot UNPINNED once, read the
     # suggested budget from the log, then pin KV_CACHE_MEMORY at (suggested −
-    # margin) — never raise. The gate is 3 cold boots with a byte-identical
-    # pool line.
-    local suggested_pin
-    suggested_pin=$(docker logs "$CONTAINER_HEAD" 2>&1 | grep -oP -- '--kv-cache-memory(?:-bytes)?=\K[0-9]+' | tail -1 || true)
-    if [ -n "${suggested_pin:-}" ]; then
+    # margin) — never raise. vLLM logs TWO suggestions; only the FIRST
+    # ("to fit into requested memory" — the profiled envelope) is defensible.
+    # The SECOND ("to fully utilize") is the C4 crash class. The gate is 3
+    # cold boots with a byte-identical pool line.
+    local pin_line pin_to_fit pin_to_gpu
+    pin_line=$(docker logs "$CONTAINER_HEAD" 2>&1 | grep -E 'to fit into requested memory' | tail -1)
+    pin_to_fit=$(printf '%s' "$pin_line" | grep -oP -- '--kv-cache-memory=\K[0-9]+' | head -1)
+    pin_to_gpu=$(printf '%s' "$pin_line" | grep -oP -- 'or `--kv-cache-memory=\K[0-9]+' | head -1)
+    if [ -n "${pin_to_fit:-}" ]; then
         if [ -n "${KV_CACHE_MEMORY:-}" ]; then
-            log "  kv-pin     : pinned KV_CACHE_MEMORY=${KV_CACHE_MEMORY} bytes (engine suggestion: ${suggested_pin})"
+            log "  kv-pin     : pinned KV_CACHE_MEMORY=${KV_CACHE_MEMORY} bytes (envelope to-fit: ${pin_to_fit}; full-utilize ${pin_to_gpu:-n/a} = C4 crash class — never)"
         else
-            log "  kv-pin     : unpinned — engine suggests --kv-cache-memory-bytes=${suggested_pin} (pin at suggested − margin via KV_CACHE_MEMORY)"
+            log "  kv-pin     : unpinned — pin KV_CACHE_MEMORY at (to-fit ${pin_to_fit} − margin), NEVER at the full-utilize value ${pin_to_gpu:-n/a}"
         fi
+    elif [ -n "${KV_CACHE_MEMORY:-}" ]; then
+        log "  kv-pin     : pinned KV_CACHE_MEMORY=${KV_CACHE_MEMORY} bytes (no engine suggestion line found)"
     fi
     if [ "${TAIL:-0}" = "1" ]; then
         log "tailing head logs — Ctrl-C just detaches, the server keeps running"

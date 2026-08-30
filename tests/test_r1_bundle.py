@@ -245,8 +245,11 @@ def test_watchdog_pause_wiring() -> None:
 def test_on_ready_bundle_receipts() -> None:
     src = START.read_text()
     assert "bundle     : lpt=" in src
-    assert "--kv-cache-memory(?:-bytes)?=" in src, "kv-suggest receipt missing"
-    assert "kv-cache-memory-bytes=${suggested_pin}" in src
+    # the kv-pin receipt must surface BOTH engine suggestions and mark the
+    # full-utilize value as the C4 crash class (never pin it)
+    assert "to fit into requested memory" in src, "kv-suggest receipt missing"
+    assert "to-fit ${pin_to_fit} − margin" in src, "to-fit recommendation missing"
+    assert "C4 crash class" in src, "full-utilize warning missing"
 
 
 def test_kv_pin_flag_is_the_exact_image_flag() -> None:
