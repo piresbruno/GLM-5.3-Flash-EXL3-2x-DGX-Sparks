@@ -109,3 +109,17 @@ Single-serve arms on the adopted mixed-chunk-1024 config, clocks identical
 
 Reference: mixed-chunk-1024-20260830-1804 (65.59 / 27.69 / 45.2 / 47.5 /
 207.3 s / 6.23 s). Zero preemptions and PASS cache gates on both arms.
+
+## Tweet-investigation arm — MNBT 7168 + LPT 3584 — 2026-08-30 (REJECTED, recorded)
+
+Mechanism verified in-image: `long_prefill_token_threshold` caps every chunk
+before the MNBT min (scheduler.py:554) — MNBT=3584 was dead weight for cold
+prefills while LPT=1792 (explains the R1 bundle's 0.9s MNBT delta). The arm
+isolated the scheduler knobs: 100k TTFT −3.2% (gate ≥10% FAIL) and the KV
+pool regressed 1.63×→1.34× (805,714 tokens). Verdict: prefill on this kit is
+kernel-bound, not step-overhead-bound; revert to 3584/1792 (done). The
+tweet's +11% likely came mostly from its bundled MoE-tile patch
+(`exl3_moe_inst_0_256.cu` exists in-image, selection internal — overlay
+territory). Sibling DeepSeek recipe does ~1638 tok/s with 1024-chunks on the
+same cluster — the GLM↔DeepSeek gap is the kernel path. Full analysis:
+`results/ab/mnbt7168-lpt3584-20260830-2234/summary.md`.
