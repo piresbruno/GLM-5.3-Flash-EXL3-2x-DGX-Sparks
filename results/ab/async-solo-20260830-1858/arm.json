@@ -1,0 +1,19 @@
+{
+  "arm": "ASYNC_SCHEDULING=1 (no DSD)",
+  "stamp": "20260830-1858",
+  "git": null,
+  "image": "ghcr.io/miaai-lab/glm-5.3-flash-2x-dgx-sparks@sha256:9bb1557a4234fce63d59599e44d10747eabd742beb337eebf9e7070be8a0fd58",
+  "gpu_clocks_sm_mhz": 2190,
+  "verdict": "REJECTED",
+  "note": "async-ON costs x1 (prose -9.7%) and no x2/x4 aggregate win on top of mixing; closes the D5 follow-up",
+  "artifacts": [
+    "structured.json",
+    "prose.json",
+    "conc.json",
+    "longprompt-100k.json",
+    "cache.json",
+    "cache-solo.json",
+    "hol.json",
+    "fingerprint.json"
+  ]
+}

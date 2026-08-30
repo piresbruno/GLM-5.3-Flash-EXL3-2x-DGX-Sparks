@@ -1,0 +1,24 @@
+{
+  "solo": {
+    "protocol": "solo",
+    "target_tokens": 110000,
+    "attempts": [
+      {
+        "attempt": 1,
+        "prompt_tokens": 99883,
+        "hit_tokens": 53760.0,
+        "hit_ratio": 0.5382,
+        "wall_s": 55.1
+      },
+      {
+        "attempt": 2,
+        "prompt_tokens": 99883,
+        "hit_tokens": 96768.0,
+        "hit_ratio": 0.9688,
+        "wall_s": 4.6
+      }
+    ],
+    "gate_hit_min": 0.9688,
+    "gate_pass": true
+  }
+}

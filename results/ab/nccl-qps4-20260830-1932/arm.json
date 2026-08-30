@@ -1,0 +1,19 @@
+{
+  "arm": "NCCL_IB_QPS_PER_CONNECTION=4",
+  "stamp": "20260830-1932",
+  "git": null,
+  "image": "ghcr.io/miaai-lab/glm-5.3-flash-2x-dgx-sparks@sha256:9bb1557a4234fce63d59599e44d10747eabd742beb337eebf9e7070be8a0fd58",
+  "gpu_clocks_sm_mhz": 2190,
+  "verdict": "REJECTED (recorded)",
+  "note": "target metric unchanged (100k prefill 207.8s vs 207.3s, HOL same); no prefill win on 2-node CX7 at 3584-token chunks",
+  "artifacts": [
+    "structured.json",
+    "prose.json",
+    "conc.json",
+    "longprompt-100k.json",
+    "cache.json",
+    "cache-solo.json",
+    "hol.json",
+    "fingerprint.json"
+  ]
+}

@@ -95,3 +95,17 @@ Answers issue #43's "more than 1 session clogs everything": queueing below
 4 running is now prefill-budget-bound only for solo prefills; interactive
 multi-client traffic admits and drains ~2× faster. Default flipped to `1024`
 (in the adoption commit); `skip` remains available as an inline override.
+
+## Phase 3.5 follow-ups — async-solo + NCCL QPS4 — 2026-08-30 (both REJECTED)
+
+Single-serve arms on the adopted mixed-chunk-1024 config, clocks identical
+(2190 MHz underclock) all serves. Evening prose drift caveat recorded
+(−9% across post-18:00 serves; see async-solo summary).
+
+| Arm | Struct ×1 | Prose ×1 | Conc ×2 agg | Conc ×4 agg | 100k prefill | HOL | Verdict |
+|---|---:|---:|---:|---:|---:|---:|---|
+| async-solo-20260830-1858 (`ASYNC=1`, no DSD) | 64.14 | 25.01 | 36.2 | 44.4 | 214.3 s | 8.0 s | **REJECTED** — async costs ×1, no ×2/×4 win post-mixing; **closes the D5 follow-up: DSD dormant permanently** |
+| nccl-qps4-20260830-1932 (`NCCL_IB_QPS_PER_CONNECTION=4`) | 64.58 | 25.18 | 37.3 | 50.3 | 207.8 s | 6.06 s | **REJECTED (recorded)** — target prefill metric unchanged on 2-node CX7; wiring kept for post-reseat re-run |
+
+Reference: mixed-chunk-1024-20260830-1804 (65.59 / 27.69 / 45.2 / 47.5 /
+207.3 s / 6.23 s). Zero preemptions and PASS cache gates on both arms.
