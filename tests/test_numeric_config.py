@@ -68,8 +68,11 @@ def test_restart_validates_before_stop() -> None:
     source = START.read_text()
     main = source.index("main() {")
     validation = source.index("start|restart) validate_numeric_config", main)
-    restart = source.index("restart)  stop; start", main)
-    assert validation < restart
+    # post-#42 layout: restart is a lock-guarded multi-line branch
+    # (with_cluster_lock; stop_containers; start_unlocked)
+    restart = source.index("\n        restart)", main)
+    start_call = source.index("start_unlocked", restart)
+    assert validation < restart < start_call
 
 
 if __name__ == "__main__":

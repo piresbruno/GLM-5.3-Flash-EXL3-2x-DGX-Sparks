@@ -577,7 +577,9 @@ check_port_free() {
     local port="$1" envname="$2"
     command -v ss >/dev/null 2>&1 || return 0
     if ss -ltn 2>/dev/null | awk '{print $4}' | grep -qE "[:.]${port}\$"; then
-        if docker inspect -f '{{.State.Running}}' "$CONTAINER_HEAD" 2>/dev/null | grep -q true; then
+        # pipefail-safe inspect (grep -q pipeline can close early and make a
+        # running container look dead — #42 pattern)
+        if [ "$(docker inspect -f '{{.State.Running}}' "$CONTAINER_HEAD" 2>/dev/null || true)" = "true" ]; then
             die "port ${port} is held by ${CONTAINER_HEAD} — use './start.sh restart' or './start.sh stop' first"
         fi
         die "port ${port} is already in use — stop it or rerun with ${envname}=<free-port>"

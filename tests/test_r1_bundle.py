@@ -232,8 +232,9 @@ def test_preflight_driver_gate_and_build_guard() -> None:
 def test_watchdog_pause_wiring() -> None:
     src = START.read_text()
     assert ".watchdog-paused" in src, "stop()/launch sentinel wiring missing"
-    # stop writes it, launch clears it
-    stop_part = src.split("stop() {")[1].split("\n}", 1)[0]
+    # stop writes it (stop() delegates to stop_containers(), which writes the
+    # sentinel — post #42-cherry-pick the lock lives in stop()), launch clears it
+    stop_part = src.split("stop_containers() {")[1].split("\n}", 1)[0]
     launch_part = src.split("launch_cluster() {")[1].split("\n}", 1)[0]
     assert ".watchdog-paused" in stop_part
     assert 'rm -f "$LOGDIR/.watchdog-paused"' in launch_part
