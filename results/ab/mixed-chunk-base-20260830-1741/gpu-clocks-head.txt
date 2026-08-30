@@ -1,0 +1,14 @@
+        SM                                             : 2190 MHz
+        Memory                                         : N/A
+        Video                                          : 1839 MHz
+    Applications Clocks
+        Graphics                                       : 2418 MHz
+        Memory                                         : N/A
+    Default Applications Clocks
+        Graphics                                       : 2418 MHz
+        Memory                                         : N/A
+    Deferred Clocks
+--
+    Max Clocks
+clocks.current.sm [MHz], clocks.max.sm [MHz], clocks.current.memory [MHz], power.draw [W], power.limit [W], temperature.gpu
+2190 MHz, 3003 MHz, [N/A], 10.62 W, [N/A], 62

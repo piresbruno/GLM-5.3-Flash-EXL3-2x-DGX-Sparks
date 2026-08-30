@@ -71,3 +71,27 @@ of the 600k window — auto pool everywhere (pin REJECTED, see below).
   inflates/subtracts TTFT components): DSD-vs-R1 aggregates were taken
   fresh-boot-to-fresh-boot with identical protocols.
 - Tags: `baseline-r1-20260830` (this verdict), `recipe-r1-20260830`.
+
+## Phase 3.5 — mixed-chunk-1024 (issue #43) — 2026-08-30
+
+Arm: `GLM53_MIXED_PREFILL_CHUNK=1024` vs `skip`, everything else = R1 bundle
+(AB-PLAN Phase 3.5 runbook). Single serve per arm, same-day back-to-back,
+identical protocol; **GPU clocks identical both serves (SM 2190 MHz operator
+underclock — absolute values sit ~10% under the morning records; the fresh
+baseline re-serve is the comparison target per rule 6)**.
+
+| Arm | Struct ×1 | Prose ×1 | Conc ×2 agg | Conc ×4 agg | TTFT ×2 | TTFT ×4 | 100k prefill | HOL | Cache b/solo | Preempt | Verdict |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---|---:|---|
+| mixed-chunk-base-20260830-1741 (`skip`) | 63.50 | 26.62 | 26.7 | 34.5 | 7046 ms | 12233 ms | 207.7 s | 5.99 s | 98.6 / 96.9% | 0 | reference |
+| **mixed-chunk-1024-20260830-1804** | **65.59** | **27.69** | **45.2** | **47.5** | **428 ms** | **528 ms** | 207.3 s | 6.23 s | 98.6 / 96.9% | 0 | **ADOPTED** |
+
+**ADOPTED.** Peer cold prefills now mix (≤1024 tokens/step) into decode
+steps: TTFT at ×2/×4 collapses −94%/−96% and aggregate rises +69%/+38%, with
+×1 decode *improving* (+3.3%/+4.0%), acceptance unchanged, zero preemptions,
+APC hits identical, solo prefill untouched. Cost, recorded: per-stream decode
+tok/s during contention drops (×2 27.3→24.8, ×4 16.5→12.6 — the issue #6
+TPOT-jitter concern, mild at c≥2) while every round finishes 27–37% sooner.
+Answers issue #43's "more than 1 session clogs everything": queueing below
+4 running is now prefill-budget-bound only for solo prefills; interactive
+multi-client traffic admits and drains ~2× faster. Default flipped to `1024`
+(in the adoption commit); `skip` remains available as an inline override.

@@ -1,0 +1,20 @@
+{
+  "arm": "skip",
+  "stamp": "20260830-1741",
+  "git": null,
+  "image": "ghcr.io/miaai-lab/glm-5.3-flash-2x-dgx-sparks@sha256:9bb1557a4234fce63d59599e44d10747eabd742beb337eebf9e7070be8a0fd58",
+  "knob": "GLM53_MIXED_PREFILL_CHUNK",
+  "gpu_clocks_sm_mhz": 2190,
+  "verdict": "reference",
+  "artifacts": [
+    "structured.json",
+    "prose.json",
+    "conc.json",
+    "longprompt-100k.json",
+    "cache.json",
+    "cache-solo.json",
+    "hol.json",
+    "fingerprint.json"
+  ],
+  "note": "baseline re-serve (skip), R1 bundle geometry"
+}
