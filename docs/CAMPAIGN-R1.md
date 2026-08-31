@@ -88,7 +88,7 @@ python3 tests/bench_concurrency.py --out results/ab/<arm>/conc.json
 # cache gates
 local/cache-probe.sh --out results/ab/<arm>/cache.json
 # or, as an arm artifact with fingerprint:
-python3 tests/bench_prefix_cache.py --label <arm> --out results/ab/<arm>
+python3 tests/bench_prefix_cache_abplan.py --label <arm> --out results/ab/<arm>
 # quality batteries
 local/serving-probe.sh
 local/acceptance.sh

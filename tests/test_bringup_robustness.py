@@ -4,7 +4,10 @@
 Same static-analysis style as test_warm_restart_stdout.py: the launcher is a
 generated-heredoc-heavy script, so these tests pin the markers that keep the
 robustness behaviours wired (worker death detection, revision-keyed sync
-marker, HF CLI fallback, worker cache writability preflight).
+marker, HF CLI fallback, worker cache writability preflight). Union of the
+upstream-main anchors (sync marker / resolve_hf_bin / cache writability) and
+the checkpoint-d1-baseline anchors (pipefail-safe container checks, cluster
+lock serialization, check_port_free).
 """
 
 from __future__ import annotations
@@ -28,29 +31,32 @@ def test_worker_death_detection_wired() -> None:
 
 
 def test_sync_revision_marker_wired() -> None:
-    # N/A on this branch (checkpoint-d1-baseline): the upstream sync-marker
-    # machinery (.glm53-exl3-synced / refs/main) is not part of this kit —
-    # weights sync here is SKIP_SYNC + launch rsync (start.sh sync_worker).
-    # Kept as a no-op so the upstream test file applies without drift.
-    return
+    src = _source()
+    assert ".glm53-exl3-synced" in src, "revision marker file missing"
+    assert "FORCE_SYNC" in src, "FORCE_SYNC escape hatch missing"
+    assert 'refs/main' in src, "marker must key on the snapshot commit (refs/main)"
     # both weights and DFlash2 go through the marker-checked helper
     assert src.count("sync_repo_to_worker ") >= 2
 
 
 def test_hf_cli_fallback_wired() -> None:
-    # N/A on this branch: upstream's resolve_hf_bin()/HF_BIN_CMD array
-    # machinery is not part of this kit (start.sh uses a direct hf_bin local
-    # in the download helper). No-op so the upstream file applies cleanly.
-    return
+    src = _source()
+    assert "resolve_hf_bin()" in src, "resolve_hf_bin helper missing"
+    assert src.count("resolve_hf_bin || die") == 3, "expected 3 call sites (weights, dflash, download-only)"
+    assert "huggingface_hub.commands.huggingface_cli" in src, "python fallback missing"
+    assert '"${HF_BIN_CMD[@]}" download' in src, "hf_download_repo must use the resolved array"
 
 
 def test_worker_cache_writability_preflight_wired() -> None:
-    # N/A on this branch: worker cache-writability preflight is upstream-main
-    # machinery (this kit validates cache placement differently). No-op.
-    return
+    src = _source()
+    assert "worker cannot write $WORKER_CACHE_DIR/hub" in src
+    assert "test -w '$WORKER_CACHE_DIR/hub'" in src
 
 
 def test_running_container_checks_are_pipefail_safe() -> None:
+    """The health poll keeps the pipefail-safe inspect comparisons (branch
+    variant): with pipefail, `grep -q true` can close early and make a running
+    container look dead, so the poll compares the inspect output directly."""
     src = _source()
     assert "docker inspect -f '{{.State.Running}}' \"$CONTAINER_HEAD\"" in src
     assert "docker inspect -f '{{.State.Running}}' \"$CONTAINER_HEAD\" 2>/dev/null | grep -q true" not in src

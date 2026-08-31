@@ -286,7 +286,7 @@ python3 tests/bench_decode.py --phase structured --structured --runs 5 --max-tok
 python3 tests/bench_decode.py --phase prose       --runs 5 --max-tokens 400 --skip-coherence --out results/ab/<arm>/prose.json
 python3 tests/bench_concurrency.py --out results/ab/<arm>/conc.json                     # ×1/×2/×4 ladder, temp 1.0
 python3 tests/bench_concurrency.py --long-prompt-tokens 100000 --levels 1 --rounds 3 --max-tokens 64 --out results/ab/<arm>/longprompt-100k.json
-python3 tests/bench_prefix_cache.py --label <arm> --out results/ab/<arm>
+python3 tests/bench_prefix_cache_abplan.py --label <arm> --out results/ab/<arm>
 python3 tools/hol_probe.py --out results/ab/<arm>/hol.json
 local/serving-probe.sh && local/acceptance.sh
 ./tests/collect_fingerprint.sh > results/ab/<arm>/fingerprint.json
