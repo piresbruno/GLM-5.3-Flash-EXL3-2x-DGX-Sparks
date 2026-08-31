@@ -18,9 +18,15 @@
 #   GLM53_WARMUP_TRITON_CACHE_DIR  host Triton cache (sampler postcondition)
 #   GLM53_WARMUP_BEARER / VLLM_API_KEY
 #   WARMUP_CURL                    test seam
+#
+# D5 (DSD): the drafter still proposes static k=7 — the walk-kernel constexpr
+# and drafter chain shapes are UNCHANGED by DSD_TABLE. The per-concurrency
+# verify shapes (seq*(1+K), e.g. 12 at c=2 / 24 at c=4 with K=5) are exercised
+# by the c2/c3/c4 bursts below, so no extra ladder is needed here. The DSD
+# receipt itself lives in tests/verify_dsd.py.
 set -u
 
-BASE="${1:-http://127.0.0.1:8888}"
+BASE="${1:-http://127.0.0.1:8081}"
 MODEL="${2:-GLM-5.3-Flash-EXL3}"
 CURL_BIN="${WARMUP_CURL:-curl}"
 REQ_TIMEOUT="${GLM53_WARMUP_REQ_TIMEOUT:-240}"
@@ -76,9 +82,17 @@ fire() {
       # are how glm53-flash's sampler drops the p / k tensors (None).
       sampling-k)  sample_fields='"top_k":40,"top_p":1.0' ;;
       sampling-p)  sample_fields='"top_k":0,"top_p":0.9' ;;
+      # Clients that omit top_k/top_p entirely (gen-config defaults apply:
+      # temp=1.0/top_p=0.95) land on the gumbel_sample path --
+      # _gumbel_sample_kernel JIT'd mid-serve on this kit without this profile.
+      sampling-plain) sample_fields='' ;;
       *)           sample_fields='"top_k":40,"top_p":0.9' ;;
     esac
-    payload='{"model":"'"$MODEL"'","messages":[{"role":"user","content":"'"$prompt"'"}],"max_tokens":24,"temperature":0.8,'"$sample_fields"',"chat_template_kwargs":{"enable_thinking":'"$thinking_json"'}}'
+    if [ -n "$sample_fields" ]; then
+      payload='{"model":"'"$MODEL"'","messages":[{"role":"user","content":"'"$prompt"'"}],"max_tokens":24,"temperature":0.8,'"$sample_fields"',"chat_template_kwargs":{"enable_thinking":'"$thinking_json"'}}'
+    else
+      payload='{"model":"'"$MODEL"'","messages":[{"role":"user","content":"'"$prompt"'"}],"max_tokens":24,"temperature":0.8,"chat_template_kwargs":{"enable_thinking":"'"$thinking_json"'"}}'
+    fi
   else
     payload='{"model":"'"$MODEL"'","messages":[{"role":"user","content":"'"$prompt"'"}],"max_tokens":24,"temperature":0,"chat_template_kwargs":{"enable_thinking":'"$thinking_json"'}}'
   fi
@@ -202,13 +216,14 @@ total_t0=$(date +%s)
 
 ladder
 
-EXPECTED_CHAT_REQUESTS=6
+EXPECTED_CHAT_REQUESTS=7
 burst c1        1 32 bounded false
 burst think-c1  1 16 bounded true
 burst short-c1  1 8 serve-default
 burst samp-k    1 8 sampling-k false
 burst samp-p    1 8 sampling-p false
 burst samp-kp   1 8 sampling-kp false
+burst samp-plain 1 8 sampling-plain false
 if [ "$MAX_CONCURRENCY" -ge 2 ]; then
   burst short-c2 2 8 serve-default
   EXPECTED_CHAT_REQUESTS=$((EXPECTED_CHAT_REQUESTS + 2))

@@ -1,0 +1,9 @@
+{
+  "label": "d1-2048",
+  "stamp": "20260829-1847",
+  "head_floor_kib": 551988,
+  "worker_floor_kib": 4528612,
+  "binding_node": "head",
+  "workload": ["python3","tests/bench_concurrency.py","--levels","1,2,4","--rounds","2","--max-tokens","120","--temperature","0","--long-prompt-tokens","15000","--out","/tmp/sat-d12048.json"],
+  "warning": "floors age ~1.5-2 GiB/day; fresh-boot floors are optimistic"
+}

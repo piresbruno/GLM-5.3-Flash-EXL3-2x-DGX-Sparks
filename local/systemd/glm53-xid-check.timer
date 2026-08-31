@@ -1,0 +1,10 @@
+[Unit]
+Description=GLM-5.3 fleet Xid scan every 5 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

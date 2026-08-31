@@ -1,0 +1,57 @@
+{
+  "burst": {
+    "protocol": "burst",
+    "sessions": 4,
+    "target_tokens": 60000,
+    "rounds": [
+      {
+        "round": 1,
+        "ok": 4,
+        "errors": [],
+        "prompt_tokens": [
+          54514,
+          54514,
+          54514,
+          54514
+        ],
+        "round_hit_tokens": 107520.0,
+        "hit_ratio_mean": 0.4931,
+        "hit_ratio_min": 0.4931,
+        "wall_s": 124.6
+      },
+      {
+        "round": 2,
+        "ok": 4,
+        "errors": [],
+        "prompt_tokens": [
+          54514,
+          54514,
+          54514,
+          54514
+        ],
+        "round_hit_tokens": 215040.0,
+        "hit_ratio_mean": 0.9862,
+        "hit_ratio_min": 0.9862,
+        "wall_s": 3.9
+      },
+      {
+        "round": 3,
+        "ok": 4,
+        "errors": [],
+        "prompt_tokens": [
+          54514,
+          54514,
+          54514,
+          54514
+        ],
+        "round_hit_tokens": 215040.0,
+        "hit_ratio_mean": 0.9862,
+        "hit_ratio_min": 0.9862,
+        "wall_s": 3.9
+      }
+    ],
+    "gate_rounds_from": 2,
+    "gate_hit_mean_min": 0.9862,
+    "gate_pass": true
+  }
+}

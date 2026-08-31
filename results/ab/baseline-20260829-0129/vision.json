@@ -1,0 +1,55 @@
+{
+  "harness": "bench_vision.py",
+  "runs": [
+    {
+      "kind": "red_circle",
+      "ok_content": true,
+      "expected": [
+        "circle",
+        "red"
+      ],
+      "nan": false,
+      "ttft_s": 0.745,
+      "seconds": 1.003,
+      "completion_tokens": 4,
+      "tok_s": 23.7,
+      "text": "Red circle."
+    },
+    {
+      "kind": "blue_square",
+      "ok_content": true,
+      "expected": [
+        "square",
+        "blue"
+      ],
+      "nan": false,
+      "ttft_s": 0.778,
+      "seconds": 1.021,
+      "completion_tokens": 4,
+      "tok_s": 25.2,
+      "text": "Blue square."
+    },
+    {
+      "kind": "digits",
+      "ok_content": true,
+      "expected": [
+        "391"
+      ],
+      "nan": false,
+      "ttft_s": 0.797,
+      "seconds": 0.92,
+      "completion_tokens": 3,
+      "tok_s": 16.4,
+      "text": "391"
+    }
+  ],
+  "temperature": 0.0,
+  "max_tokens": 120,
+  "ts": 1787964374.501334,
+  "thinking": false,
+  "summary": {
+    "passed": 3,
+    "total": 3,
+    "any_nan": false
+  }
+}

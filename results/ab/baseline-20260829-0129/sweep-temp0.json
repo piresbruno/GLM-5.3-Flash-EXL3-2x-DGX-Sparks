@@ -1,0 +1,74 @@
+{
+  "harness": "bench_concurrency.py",
+  "url": "http://127.0.0.1:8081",
+  "levels": [
+    1,
+    2,
+    4
+  ],
+  "rounds": 2,
+  "max_tokens": 400,
+  "temperature": 0.0,
+  "ts": 1787964239.3957338,
+  "levels_data": {
+    "1": {
+      "requests": 2,
+      "agg_toks_per_s": 35.8,
+      "decode_toks_per_s": 37.0,
+      "ttft_ms_mean": 374,
+      "mean_wall_s": 11.2,
+      "fails": 0,
+      "accept_ratio": 0.541
+    },
+    "2": {
+      "requests": 4,
+      "agg_toks_per_s": 43.9,
+      "decode_toks_per_s": 23.3,
+      "ttft_ms_mean": 456,
+      "mean_wall_s": 18.2,
+      "fails": 0,
+      "accept_ratio": 0.441
+    },
+    "4": {
+      "requests": 8,
+      "agg_toks_per_s": 42.7,
+      "decode_toks_per_s": 15.5,
+      "ttft_ms_mean": 6728,
+      "mean_wall_s": 37.5,
+      "fails": 0,
+      "accept_ratio": 0.304
+    }
+  },
+  "warmup": {
+    "ok": true,
+    "seconds": 1.203,
+    "ttft_s": 0.32,
+    "completion_tokens": 32,
+    "decode_toks_per_s": 35.1
+  },
+  "final_metrics": {
+    "drafted": 53732.0,
+    "accepted": 19145.0,
+    "accept_per_pos": {
+      "0": 5976.0,
+      "1": 4273.0,
+      "2": 3043.0,
+      "3": 2165.0,
+      "4": 1587.0,
+      "5": 1208.0,
+      "6": 893.0
+    },
+    "apc_queries": 25318.0,
+    "apc_hits": 7168.0,
+    "preemptions": 0.0
+  },
+  "accept_per_pos_ratio": {
+    "0": 0.312,
+    "1": 0.223,
+    "2": 0.159,
+    "3": 0.113,
+    "4": 0.083,
+    "5": 0.063,
+    "6": 0.047
+  }
+}

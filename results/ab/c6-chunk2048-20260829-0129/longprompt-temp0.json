@@ -1,0 +1,55 @@
+{
+  "harness": "bench_concurrency.py",
+  "url": "http://127.0.0.1:8081",
+  "levels": [
+    1
+  ],
+  "rounds": 3,
+  "max_tokens": 64,
+  "temperature": 0.0,
+  "long_prompt_tokens": 3600,
+  "ts": 1787965216.0643559,
+  "levels_data": {
+    "1": {
+      "requests": 3,
+      "agg_toks_per_s": 6.3,
+      "decode_toks_per_s": 39.5,
+      "ttft_ms_mean": 8539,
+      "mean_wall_s": 10.1,
+      "fails": 0,
+      "accept_ratio": 0.586
+    }
+  },
+  "warmup": {
+    "ok": true,
+    "seconds": 1.547,
+    "ttft_s": 0.29,
+    "completion_tokens": 32,
+    "decode_toks_per_s": 24.7
+  },
+  "final_metrics": {
+    "drafted": 3031.0,
+    "accepted": 1081.0,
+    "accept_per_pos": {
+      "0": 333.0,
+      "1": 252.0,
+      "2": 191.0,
+      "3": 119.0,
+      "4": 84.0,
+      "5": 58.0,
+      "6": 44.0
+    },
+    "apc_queries": 20592.0,
+    "apc_hits": 0.0,
+    "preemptions": 0.0
+  },
+  "accept_per_pos_ratio": {
+    "0": 0.308,
+    "1": 0.233,
+    "2": 0.177,
+    "3": 0.11,
+    "4": 0.078,
+    "5": 0.054,
+    "6": 0.041
+  }
+}

@@ -1,0 +1,61 @@
+{
+ "arm": "r1-auto-20260830-0633",
+ "date": "2026-08-30T06:33Z",
+ "git_sha": "38b81da49f40efadf053594e11a6721bb80a832f (branch checkpoint-d1-baseline)",
+ "image_repo_digest": "ghcr.io/miaai-lab/glm-5.3-flash-2x-dgx-sparks@sha256:9bb1557a4234fce63d59599e44d10747eabd742beb337eebf9e7070be8a0fd58 (identical both ranks)",
+ "boot_log": "logs/r1-boot3-auto.log",
+ "config": {
+  "MAX_NUM_BATCHED_TOKENS": 3584,
+  "LONG_PREFILL_TOKEN_THRESHOLD": 1792,
+  "ASYNC_SCHEDULING": "0 (--no-async-scheduling)",
+  "VLLM_PREFIX_CACHE_RETENTION_INTERVAL": 0,
+  "FLASHINFER_WORKSPACE_BASE": "/root/.cache/vllm/flashinfer",
+  "MAX_MODEL_LEN": 600000,
+  "MAX_NUM_SEQS": 4,
+  "GPU_MEM_UTIL": 0.85,
+  "KV_CACHE_MEMORY": null,
+  "KV_pin": "REJECTED (3 freezes, NVRM NV_ERR_NO_MEMORY — results/ab/r1-phase0/freeze-20260830.md)"
+ },
+ "boot": {
+  "kv_pool_tokens": 979591,
+  "max_concurrency_600k": "1.63x",
+  "available_kv_gib": 12.27,
+  "engine_to_fit_suggestion_gib": 14.13,
+  "full_utilize_suggestion_gib": 19.31,
+  "health_after_s": 440,
+  "post_init_drain_memfree_gib": {"head": "1.2", "worker": "6.3"},
+  "warmup": "21/21 ok"
+ },
+ "metrics": {
+  "structured_decode_tok_s": 71.97,
+  "structured_accept_ratio": 1.0,
+  "structured_ttft_s_median": 0.344,
+  "prose_decode_tok_s": 27.64,
+  "longprompt_100k_cold_ttft_s": 199.4,
+  "longprompt_100k_prefill_tok_s": 501,
+  "cache_burst_rounds23_hit": 0.986,
+  "cache_burst_round1_hit": 0.493,
+  "cache_solo_replay_hit_at_200k": 0.987,
+  "hol_first_token_s_behind_240k_cold": 8.39,
+  "conc_c4_agg_tok_s": 33.7,
+  "conc_c4_decode_tok_s": 17.4,
+  "memfloor_binding_gib": {"head": 0.45, "worker": 5.04},
+  "stability": "0 preemptions, no NaN, no dmesg faults during the suite"
+ },
+ "gates": {
+  "structured": "PASS — 71.97 vs 65.92 record (+9.2% ≥ +3% expected; floor ±3%)",
+  "prose": "PASS — 27.64 vs 26.70 (+3.5% ≥ +3%)",
+  "prefill_100k": "PASS — 199.4 s < 204.7 s record (−2.6%); effective prefill 501 tok/s vs 489 (+2.5%)",
+  "cache_burst": "PASS — rounds 2-3 hit 98.6% ≥ 90%",
+  "cache_solo": "PASS — 98.7% ≥ 93% at ~200k measured prompt",
+  "hol": "PASS — 8.39 s ≤ 30 s (Reederey87 reference 7.9 s)",
+  "pool": "PASS — 979,591 tokens = 1.63x ≥ 1.0x of the 600k window (auto, no pin)",
+  "memfloor": "RECORDED — head 0.45 GiB binding (D1 standing state persists; worker 5.04 GiB)",
+  "acceptance": "PASS — serving 6/6, quality 7/7 (tools 5/5, thinking on/off, vision 'Red', needles 16k/60k, cache-aware replay)"
+ },
+ "notes": [
+  "Stale-acceptance question RESOLVED: structured acceptance 1.0 (was 0.9588 pre-re-bench) with decode +9.2% — the xgrammar backports transfer (Reederey87 W1 evidence).",
+  "Their ~893 tok/s prefill claim does NOT transfer (ours ~501): prefill gain is +2.5%, not +82%. Decode and cache claims DO transfer.",
+  "usage.prompt_tokens_details is not populated by this fork — all hit ratios measured via vllm:prefix_cache_hits_total deltas."
+ ]
+}

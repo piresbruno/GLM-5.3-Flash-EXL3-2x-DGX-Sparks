@@ -1,0 +1,9 @@
+{
+  "label": "mnbt7168-lpt3584-20260830-2234",
+  "stamp": "20260830-2259",
+  "head_floor_kib": 2736940,
+  "worker_floor_kib": null,
+  "binding_node": "null",
+  "workload": ["python3","tests/bench_concurrency.py","--levels","1","--rounds","1","--out","/tmp/memfloor-probe.json"],
+  "warning": "floors age ~1.5-2 GiB/day; fresh-boot floors are optimistic"
+}

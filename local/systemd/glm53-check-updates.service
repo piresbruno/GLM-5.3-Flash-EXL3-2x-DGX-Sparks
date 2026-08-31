@@ -1,0 +1,8 @@
+# One-shot image/driver drift guard. Installed as a user unit by
+# local/install-ops-units.sh, which substitutes @REPO_DIR@.
+[Unit]
+Description=GLM-5.3 image digest + driver drift check (R1 ops kit)
+
+[Service]
+Type=oneshot
+ExecStart=@REPO_DIR@/local/check-updates.sh

@@ -1,0 +1,10 @@
+[Unit]
+Description=GLM-5.3 image/driver drift check every 6 hours
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=6h
+AccuracySec=5min
+
+[Install]
+WantedBy=timers.target

@@ -275,6 +275,50 @@ for old, new in (
     text = text.replace(old, new)
 indexer.write_text(text)
 
+# C1 (AB-PLAN): indexer NaN-hardening.
+# 1) pool_topk buffers (prefill + decode branches) initialize to -1 instead
+#    of torch.empty, so a skipped/aborted pool write can never surface a
+#    stale uninitialized pool id as a huge garbage index downstream.
+# The two pool_topk sites differ in indentation (prefill 16/20, decode 12/16).
+pool_topk_pairs = (
+    (
+        "                pool_topk = torch.empty(\n"
+        "                    (num_rows, select_k), dtype=torch.int32, device=logits.device\n"
+        "                )\n",
+        "                pool_topk = torch.full(\n"
+        "                    (num_rows, select_k), -1, dtype=torch.int32, device=logits.device\n"
+        "                )\n",
+    ),
+    (
+        "            pool_topk = torch.empty(\n"
+        "                (num_rows, select_k), dtype=torch.int32, device=logits.device\n"
+        "            )\n",
+        "            pool_topk = torch.full(\n"
+        "                (num_rows, select_k), -1, dtype=torch.int32, device=logits.device\n"
+        "            )\n",
+    ),
+)
+for old_pool_topk, new_pool_topk in pool_topk_pairs:
+    n = text.count(old_pool_topk)
+    if n != 1:
+        raise RuntimeError(f"expected one pool_topk buffer, found {n}")
+    text = text.replace(old_pool_topk, new_pool_topk)
+indexer.write_text(text)
+
+# 2) kpool_compress history guard: also bound pid < pool_len. A stale/padded
+#    pid >= pool_len would otherwise multiply into garbage addresses; with the
+#    bound it degrades to -1 (masked). pool_len is in kernel scope (seq_len // POOL_SIZE).
+kpool_ops = site / "models/glm5next/nvidia/ops/kpool_compress.py"
+ktext = kpool_ops.read_text()
+old_guard = "    hist_out = tl.where(pid >= 0, hist_val, -1)\n"
+new_guard = (
+    "    hist_out = tl.where((pid >= 0) & (pid < pool_len), hist_val, -1)\n"
+)
+if ktext.count(old_guard) != 1:
+    raise RuntimeError("expected one kpool history guard")
+ktext = ktext.replace(old_guard, new_guard)
+kpool_ops.write_text(ktext)
+
 warmup = site / "model_executor/warmup/kernel_warmup.py"
 text = warmup.read_text()
 old_sparse_warmup = (
@@ -348,6 +392,16 @@ for rel in ("models/glm5next/nvidia/model.py", "models/glm5next/nvidia/mtp.py"):
 kpool_src = (site / "model_executor/layers/sparse_attn_indexer_kpool.py").read_text()
 compile(kpool_src, "sparse_attn_indexer_kpool.py", "exec")
 assert kpool_src.count("pool_ids[:, : select_k - 1]") == 2
+# C1 verify: pool_topk fully initialized; kpool history guard bounded.
+assert kpool_src.count("torch.full(") >= 2
+assert (
+    "pool_topk = torch.empty(" in kpool_src
+) is False, "pool_topk must be torch.full(-1) in both branches"
+kops_src = (site / "models/glm5next/nvidia/ops/kpool_compress.py").read_text()
+compile(kops_src, "kpool_compress.py", "exec")
+assert (
+    "tl.where((pid >= 0) & (pid < pool_len), hist_val, -1)" in kops_src
+), "kpool history guard must be bounded by pool_len"
 
 from vllm.v1.attention.backends.mla.flashinfer_mla_sparse import (
     FlashInferMLASparseSM120Backend as sm120_backend,

@@ -1,0 +1,102 @@
+{
+  "label": "mixed-chunk-1024",
+  "fingerprint": {
+    "ts": "2026-08-30T17:31:08Z",
+    "git_sha": "7440f2f244819dc22b60c3d95bd33fc4f46e5950",
+    "image_repo_digest": "ghcr.io/miaai-lab/glm-5.3-flash-2x-dgx-sparks@sha256:9bb1557a4234fce63d59599e44d10747eabd742beb337eebf9e7070be8a0fd58",
+    "env": {
+      "MAX_NUM_BATCHED_TOKENS": "3584",
+      "LONG_PREFILL_TOKEN_THRESHOLD": "1792",
+      "ASYNC_SCHEDULING": "0",
+      "VLLM_PREFIX_CACHE_RETENTION_INTERVAL": "0",
+      "FLASHINFER_WORKSPACE_BASE": "/root/.cache/vllm/flashinfer",
+      "MAX_MODEL_LEN": "600000  # Operator decision (DSD campaign, 2026-08-29): 600k window; same UMA pool \u2192 ~1.6\u00d7 concurrency margin (was 1.08\u00d7 at 900k)",
+      "MAX_NUM_SEQS": "4",
+      "GPU_MEM_UTIL": "0.85",
+      "KV_CACHE_MEMORY": "",
+      "IMAGE": "ghcr.io/miaai-lab/glm-5.3-flash-2x-dgx-sparks@sha256:9bb1557a4234fce63d59599e44d10747eabd742beb337eebf9e7070be8a0fd58"
+    }
+  },
+  "burst": {
+    "protocol": "burst",
+    "sessions": 4,
+    "target_tokens": 60000,
+    "rounds": [
+      {
+        "round": 1,
+        "ok": 4,
+        "errors": [],
+        "prompt_tokens": [
+          54514,
+          54514,
+          54514,
+          54514
+        ],
+        "round_hit_tokens": 107520.0,
+        "hit_ratio_mean": 0.4931,
+        "hit_ratio_min": 0.4931,
+        "wall_s": 120.2
+      },
+      {
+        "round": 2,
+        "ok": 4,
+        "errors": [],
+        "prompt_tokens": [
+          54514,
+          54514,
+          54514,
+          54514
+        ],
+        "round_hit_tokens": 215040.0,
+        "hit_ratio_mean": 0.9862,
+        "hit_ratio_min": 0.9862,
+        "wall_s": 3.9
+      },
+      {
+        "round": 3,
+        "ok": 4,
+        "errors": [],
+        "prompt_tokens": [
+          54514,
+          54514,
+          54514,
+          54514
+        ],
+        "round_hit_tokens": 215040.0,
+        "hit_ratio_mean": 0.9862,
+        "hit_ratio_min": 0.9862,
+        "wall_s": 3.9
+      }
+    ],
+    "gate_rounds_from": 2,
+    "gate_hit_mean_min": 0.9862,
+    "gate_pass": true
+  },
+  "solo": {
+    "protocol": "solo",
+    "target_tokens": 110000,
+    "attempts": [
+      {
+        "attempt": 1,
+        "prompt_tokens": 99883,
+        "hit_tokens": 53760.0,
+        "hit_ratio": 0.5382,
+        "wall_s": 54.0
+      },
+      {
+        "attempt": 2,
+        "prompt_tokens": 99883,
+        "hit_tokens": 96768.0,
+        "hit_ratio": 0.9688,
+        "wall_s": 4.5
+      }
+    ],
+    "gate_hit_min": 0.9688,
+    "gate_pass": true
+  },
+  "gates": {
+    "burst_rounds2plus_hit>=0.90": true,
+    "solo_replay_hit>=0.93": true
+  },
+  "pass": true
+}

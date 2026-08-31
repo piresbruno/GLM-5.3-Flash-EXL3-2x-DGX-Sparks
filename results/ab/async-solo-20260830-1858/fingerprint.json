@@ -1,0 +1,22 @@
+{
+  "ts": "2026-08-30T18:07:44Z",
+  "git_sha": "3dce63bca1a1b88cfc3bc5216cffa56b30f379e2",
+  "image": "ghcr.io/miaai-lab/glm-5.3-flash-2x-dgx-sparks@sha256:9bb1557a4234fce63d59599e44d10747eabd742beb337eebf9e7070be8a0fd58",
+  "image_id": "sha256:9bb1557a4234fce63d59599e44d10747eabd742beb337eebf9e7070be8a0fd58",
+  "repo_digest": "ghcr.io/miaai-lab/glm-5.3-flash-2x-dgx-sparks@sha256:9bb1557a4234fce63d59599e44d10747eabd742beb337eebf9e7070be8a0fd58",
+  "worker_image_id": "sha256:ad0cdd86d1ddd15ee758f519d16da15ac237f7f0648a5c52fbc20f9554944263",
+  "worker_repo_digest": "ghcr.io/miaai-lab/glm-5.3-flash-2x-dgx-sparks@sha256:9bb1557a4234fce63d59599e44d10747eabd742beb337eebf9e7070be8a0fd58",
+  "_note": "rank images match if repo_digest == worker_repo_digest (same manifest). .Id may differ across docker-load paths — not a mismatch.",
+  "env_fingerprint": {
+    "MAX_MODEL_LEN": 600000,
+    "GPU_MEM_UTIL": "0.85",
+    "MAX_NUM_BATCHED_TOKENS": 3584,
+    "DFLASH_TOKENS": 7,
+    "GLM53_MIXED_PREFILL_CHUNK": "1024",
+    "KV_CACHE_DTYPE": "fp8",
+    "SPEC_METHOD": "dflash",
+    "LANGUAGE_MODEL_ONLY": 0,
+    "ENFORCE_EAGER": 0
+  },
+  "kv_pool_tokens": "850285"
+}

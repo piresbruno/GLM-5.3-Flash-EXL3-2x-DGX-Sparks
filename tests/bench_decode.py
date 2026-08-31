@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Streaming decode bench + coherence probes for GLM-5.3-Flash EXL3 on :8888.
+"""Streaming decode bench + coherence probes for GLM-5.3-Flash EXL3.
 
 Decode tok/s = (completion_tokens - 1) / (end - first_token_time).
 Does not reimplement the model; drives the live OpenAI API.
+Endpoint: GLM53_BENCH_BASE (default http://127.0.0.1:8081 — the live .env PORT).
 """
 from __future__ import annotations
 
@@ -16,7 +17,9 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-BASE = "http://127.0.0.1:8888"
+import os
+
+BASE = os.environ.get("GLM53_BENCH_BASE", "http://127.0.0.1:8081")
 MODEL = "GLM-5.3-Flash-EXL3"
 BENCH_PROMPT = (
     "Write a detailed step-by-step explanation of how a hash map works, "

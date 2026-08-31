@@ -12,6 +12,8 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 
+.DS_Store
+._*
 
 # bench artifacts (prefix-cache runs write here)
 results/

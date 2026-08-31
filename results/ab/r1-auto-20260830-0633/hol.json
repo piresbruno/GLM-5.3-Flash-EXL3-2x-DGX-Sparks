@@ -1,0 +1,9 @@
+{
+  "background_tokens": 240000,
+  "hol_tokens": 1200,
+  "hol_first_token_s": 8.39,
+  "gate_s": 30.0,
+  "gate_pass": true,
+  "background_wall_s": 10.5,
+  "hol_error": null
+}
