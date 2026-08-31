@@ -245,3 +245,14 @@ Findings on this kit (full record: `results/ab/mnbt7168-lpt3584-20260830-2234/`)
 - Open question for the community report author: their absolute baseline is
   831 tok/s vs our 483 on the same model class — DFlash2 on/off, bpw, and
   util would explain most of it and may reveal a config import.
+
+**UPDATE (2026-08-31, post-freeze):** the "layerwise NVTX/profiler"
+decomposition lever is **withdrawn for long prefills** — an in-image torch
+profiler capture of a ~78k prefill froze the head node with the documented
+NVRM OOM signature (65 × `NV_ERR_NO_MEMORY`; CUPTI + trace post-processing on
+host RAM starves NVRM under UMA). Full forensics:
+`results/ab/r1-phase0/freeze-20260831-profiling.md`. Standing rule: no
+in-image torch profiling of long prefills on this kit. The prefill
+decomposition falls back to standalone kernel microbenches (exllamav3_ext
+direct, short shapes, outside the serving process). The
+`EXLLAMAV3_TUNE_CACHE` experiment remains viable (cache seeding, no CUPTI).
