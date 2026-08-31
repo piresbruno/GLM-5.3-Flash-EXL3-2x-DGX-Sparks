@@ -53,3 +53,24 @@ Acceptable alternatives, in order of safety:
 Power cycle → `./start.sh stop` both ranks (worker had exited 0) → relaunch
 adopted config (no profiler) → rendezvous clean after machine reboot (no C5
 GID drift), pool **1,014,285 tokens = 1.69×**, smoke 200. No residual damage.
+
+## Addendum — guarded reproduction abandoned (2026-08-31 01:0x)
+
+Two guarded boots (profiler config, live MemFree/NV_ERR polling, instant
+`docker rm -f` kill-switch on both ranks) failed to reach the pool-sizing
+line safely and were abandoned:
+
+1. Window too short (300 s — weight load alone is ~5.5 min at 2.5 s/shard).
+2. Threshold miscalibrated — MemFree 24 GiB during weight load is NORMAL
+   (~24 GiB weights + page cache in UMA); killed on MemFree < 25. Corrected
+   thresholds: storm = NV_ERR > 3, valley = MemFree < 10 GiB. Both boots:
+   0 NV_ERR, clean release, no damage.
+
+**Decision: the in-image profiler path is abandoned entirely.** Engine init
+on a profiler boot is normal (first freeze's blowup correlated with the
+profiled workload itself — CUPTI + `torch_profiler_with_stack=True` during
+the trace), so no guarded boot can observe the failure safely. The prefill
+decomposition moves to a standalone kernel microbench (exllamav3_ext direct,
+short shapes, outside the serving process). Note for the next session:
+`--profiler-config` defaults to `torch_profiler_with_stack=True` — any
+future in-image profiling attempt (tiny prompts only) should set it False.
